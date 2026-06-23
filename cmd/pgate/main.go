@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"io"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/happyTonakai/permission-gate/internal/builtin"
 	"github.com/happyTonakai/permission-gate/internal/config"
@@ -41,7 +43,7 @@ func printUsage() {
 Usage:
   pgate check [flags] <command>    Check a command against the rules
   pgate init                       Create default config file
-  pgate hook install <target>      Install hook (claude-code | opencode | pi-agent)
+  pgate hook install <target>      Install hook (claude-code | opencode | pi)
   pgate hook uninstall <target>    Uninstall hook
   pgate version                    Show version
 
@@ -124,31 +126,163 @@ func runCheck(args []string) {
 }
 
 func runHook(args []string) {
-	if len(args) < 2 {
+	if len(args) == 0 {
 		fmt.Fprintf(os.Stderr, "Usage: pgate hook install|uninstall <target>\n")
-		fmt.Fprintf(os.Stderr, "Targets: claude-code, opencode, pi-agent\n")
+		fmt.Fprintf(os.Stderr, "Targets: claude-code, opencode, pi\n")
 		os.Exit(1)
 	}
 
-	action := args[0]
-	target := args[1]
-
-	switch action {
+	switch args[0] {
 	case "install":
-		if err := installHook(target); err != nil {
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: pgate hook install <target>")
+			fmt.Fprintln(os.Stderr, "Targets: claude-code, opencode, pi")
+			os.Exit(1)
+		}
+		if err := installHook(args[1]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Installed permission-gate hook for %s\n", target)
+		fmt.Printf("Installed permission-gate hook for %s\n", args[1])
+
 	case "uninstall":
-		if err := uninstallHook(target); err != nil {
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: pgate hook uninstall <target>")
+			fmt.Fprintln(os.Stderr, "Targets: claude-code, opencode, pi")
+			os.Exit(1)
+		}
+		if err := uninstallHook(args[1]); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Removed permission-gate hook for %s\n", target)
+		fmt.Printf("Removed permission-gate hook for %s\n", args[1])
+
+	case "claude-request":
+		handleClaudeRequest()
+
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown action: %s (use install or uninstall)\n", action)
+		fmt.Fprintf(os.Stderr, "Unknown hook action: %s\n", args[0])
 		os.Exit(1)
+	}
+}
+
+// ─── Claude Code hook handler ─────────────────────────────────
+
+type claudeLogEntry struct {
+	TS      string `json:"ts"`
+	Level   string `json:"level"`
+	Command string `json:"command"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+func logClaudeDecision(level, command, reason string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	logDir := filepath.Join(home, ".claude", "hooks")
+	os.MkdirAll(logDir, 0755)
+	logFile := filepath.Join(logDir, "permission-gate."+time.Now().Format("20060102")+".log")
+
+	entry := claudeLogEntry{
+		TS:      time.Now().Format(time.RFC3339),
+		Level:   level,
+		Command: command,
+		Reason:  reason,
+	}
+	data, _ := json.Marshal(entry)
+	os.WriteFile(logFile, append(data, '\n'), 0644)
+
+	// Clean logs older than 7 days
+	cleanupLogs(logDir, "permission-gate.", 7)
+}
+
+func cleanupLogs(dir, prefix string, keepDays int) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().AddDate(0, 0, -keepDays)
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), prefix) {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Before(cutoff) {
+			os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
+}
+
+func handleClaudeRequest() {
+	var req struct {
+		ToolName  string `json:"tool_name"`
+		ToolInput struct {
+			Command string `json:"command"`
+		} `json:"tool_input"`
+	}
+
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		os.Exit(0)
+	}
+	if err := json.Unmarshal(data, &req); err != nil {
+		os.Exit(0)
+	}
+
+	if req.ToolName != "Bash" || req.ToolInput.Command == "" {
+		os.Exit(0)
+	}
+
+	cwd, _ := os.Getwd()
+	cfg, _, err := config.ResolveConfig(cwd)
+	if err != nil {
+		os.Exit(0)
+	}
+
+	engine := rules.New(cfg, builtin.Allow(), builtin.Deny(), builtin.Ask(), builtin.DenyFlags())
+	result := engine.Evaluate(req.ToolInput.Command)
+
+	behavior := verdictLevelToClaude(result.Final.Level)
+	logClaudeDecision(behavior, req.ToolInput.Command, result.Final.Reason)
+
+	resp := claudeHookResponse{
+		HookSpecificOutput: claudeHookOutput{
+			HookEventName: "PermissionRequest",
+			Decision: claudeHookDecision{
+				Behavior: behavior,
+				Message:  result.Final.Reason,
+			},
+		},
+	}
+	json.NewEncoder(os.Stdout).Encode(resp)
+}
+
+type claudeHookResponse struct {
+	HookSpecificOutput claudeHookOutput `json:"hookSpecificOutput"`
+}
+
+type claudeHookOutput struct {
+	HookEventName string             `json:"hookEventName"`
+	Decision      claudeHookDecision `json:"decision"`
+}
+
+type claudeHookDecision struct {
+	Behavior string `json:"behavior"`
+	Message  string `json:"message,omitempty"`
+}
+
+func verdictLevelToClaude(l verdict.Level) string {
+	switch l {
+	case verdict.LevelAllow:
+		return "allow"
+	case verdict.LevelDeny:
+		return "deny"
+	default:
+		return "ask"
 	}
 }
 

@@ -284,3 +284,29 @@ func (c ExtractedCommand) IsPrefixMatch(prefix []string) bool {
 	}
 	return true
 }
+
+// IsSuffixMatch checks if the command ends with the given suffix tokens.
+func (c ExtractedCommand) IsSuffixMatch(suffix []string) bool {
+	if len(suffix) == 0 || len(suffix) > len(c.Tokens) {
+		return false
+	}
+	offset := len(c.Tokens) - len(suffix)
+	for i, s := range suffix {
+		if c.Tokens[offset+i] != s {
+			return false
+		}
+	}
+	return true
+}
+
+// Match checks a pattern against the command. Patterns starting with "*" use
+// suffix matching; all other patterns use prefix matching.
+func (c ExtractedCommand) Match(pattern []string) bool {
+	if len(pattern) == 0 {
+		return false
+	}
+	if pattern[0] == "*" {
+		return c.IsSuffixMatch(pattern[1:])
+	}
+	return c.IsPrefixMatch(pattern)
+}

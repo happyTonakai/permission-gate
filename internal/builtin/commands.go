@@ -28,6 +28,8 @@ func Allow() []string {
 		processCommands(),
 		permissionCommands(),
 		ossCommands(),
+		// Wildcard suffix patterns (any command ending with these flags)
+		wildcardAllow(),
 		// Auto-converted from safe-chains TOML definitions (450+ tools)
 		generatedAllow(),
 	)
@@ -56,6 +58,17 @@ func Ask() []string {
 		deploymentCommands(),
 		installCommands(),
 	)
+}
+
+// wildcardAllow returns wildcard patterns (* prefix = suffix match).
+// These allow any command ending with safe flags like --version.
+func wildcardAllow() []string {
+	return []string{
+		"* --version",
+		"* --help",
+		"* -version",
+		"* -help",
+	}
 }
 
 // DenyFlags returns built-in flag-level deny rules.

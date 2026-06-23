@@ -374,3 +374,30 @@ func TestPathPrefixMatch(t *testing.T) {
 		}
 	}
 }
+
+func TestMatch(t *testing.T) {
+	tests := []struct {
+		tokens  []string
+		pattern []string
+		want    bool
+	}{
+		{[]string{"git", "log", "--oneline"}, []string{"git", "log"}, true},
+		{[]string{"git", "push"}, []string{"git", "log"}, false},
+		{[]string{"ls", "-la"}, []string{"ls"}, true},
+		{[]string{"python", "--version"}, []string{"*", "--version"}, true},
+		{[]string{"git", "--version"}, []string{"*", "--version"}, true},
+		{[]string{"python", "--help"}, []string{"*", "--help"}, true},
+		{[]string{"python", "--version", "--help"}, []string{"*", "--version"}, false},
+		{[]string{"python", "--version"}, []string{"*", "--help"}, false},
+		{[]string{"ls"}, []string{"*", "--version"}, false},
+		{[]string{"git", "push", "--force"}, []string{"*", "push", "--force"}, true},
+	}
+
+	for _, tt := range tests {
+		cmd := ExtractedCommand{Tokens: tt.tokens}
+		got := cmd.Match(tt.pattern)
+		if got != tt.want {
+			t.Errorf("Match(%v, %v) = %v, want %v", tt.tokens, tt.pattern, got, tt.want)
+		}
+	}
+}

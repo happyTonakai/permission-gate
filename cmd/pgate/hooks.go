@@ -1,11 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 )
 
 func installHook(target string) error {
@@ -20,10 +19,10 @@ func installHook(target string) error {
 		return installClaudeCodeHook(binary)
 	case "opencode":
 		return installOpenCodeHook(binary)
-	case "pi-agent":
+	case "pi":
 		return installPiAgentHook(binary)
 	default:
-		return fmt.Errorf("unknown target: %s (supported: claude-code, opencode, pi-agent)", target)
+		return fmt.Errorf("unknown target: %s (supported: claude-code, opencode, pi)", target)
 	}
 }
 
@@ -33,21 +32,24 @@ func uninstallHook(target string) error {
 		return removeClaudeCodeHook()
 	case "opencode":
 		return removeOpenCodeHook()
-	case "pi-agent":
+	case "pi":
 		return removePiAgentHook()
 	default:
-		return fmt.Errorf("unknown target: %s (supported: claude-code, opencode, pi-agent)", target)
+		return fmt.Errorf("unknown target: %s (supported: claude-code, opencode, pi)", target)
 	}
 }
 
 // ─── Claude Code ────────────────────────────────────────────────
-
-const claudeHookScript = `#!/usr/bin/env bash
-# Permission Gate — Claude Code pre-tool hook
-# Installed by pgate hook install claude-code
-
-eval "$(permission-gate hook-env 2>/dev/null)" 2>/dev/null || true
-`
+//
+// Claude Code hook system: shell scripts registered in settings.json
+// under hooks.PermissionRequest. Each receives JSON on stdin:
+//
+//	{"tool_name":"Bash","tool_input":{"command":"..."},"cwd":"...","transcript_path":"..."}
+//
+// Must print to stdout:
+//
+//	{"hookSpecificOutput":{"hookEventName":"PermissionRequest",
+//	  "decision":{"behavior":"allow"|"deny"|"ask","message":"..."}}}
 
 func claudeHookDir() (string, error) {
 	home, err := os.UserHomeDir()
@@ -58,7 +60,6 @@ func claudeHookDir() (string, error) {
 }
 
 func installClaudeCodeHook(binary string) error {
-	// We install as a PermissionRequest hook — a script that pgate runs.
 	hookDir, err := claudeHookDir()
 	if err != nil {
 		return err
@@ -71,12 +72,116 @@ func installClaudeCodeHook(binary string) error {
 	content := fmt.Sprintf(`#!/usr/bin/env bash
 # Permission Gate — Claude Code PermissionRequest hook
 # Installed by: pgate hook install claude-code
-
 exec %s hook claude-request
 `, binary)
 
 	if err := os.WriteFile(hookPath, []byte(content), 0755); err != nil {
 		return err
+	}
+	fmt.Println("Hook script written to", hookPath)
+
+	if err := registerClaudeHook(hookPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not auto-register in settings.json: %v\n", err)
+		fmt.Fprintln(os.Stderr, "To register manually, add to ~/.claude/settings.json:")
+		fmt.Fprintln(os.Stderr, `  "PermissionRequest": [{"hooks": [{"command": "`+hookPath+`", "type": "command"}], "matcher": "Bash"}]`)
+	}
+	return nil
+}
+
+type claudeSettings struct {
+	Hooks map[string][]claudeHookGroup `json:"hooks"`
+}
+
+type claudeHookGroup struct {
+	Hooks   []claudeHookEntry `json:"hooks"`
+	Matcher string            `json:"matcher"`
+}
+
+type claudeHookEntry struct {
+	Command string `json:"command"`
+	Type    string `json:"type"`
+}
+
+func registerClaudeHook(hookPath string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", settingsPath, err)
+	}
+
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("parse %s: %w", settingsPath, err)
+	}
+
+	// Build a hook entry map (using map[string]interface{} to preserve all fields)
+	hookEntry := map[string]interface{}{
+		"command": hookPath,
+		"type":    "command",
+	}
+	permEntry := map[string]interface{}{
+		"hooks":   []interface{}{hookEntry},
+		"matcher": "Bash",
+	}
+
+	// Ensure hooks map exists
+	hooks, _ := raw["hooks"].(map[string]interface{})
+	if hooks == nil {
+		hooks = make(map[string]interface{})
+		raw["hooks"] = hooks
+	}
+
+	// Ensure PermissionRequest list exists
+	permList, _ := hooks["PermissionRequest"].([]interface{})
+
+	// Check if already registered (by command path)
+	already := false
+	for _, entry := range permList {
+		e, _ := entry.(map[string]interface{})
+		if e == nil {
+			continue
+		}
+		hooksList, _ := e["hooks"].([]interface{})
+		for _, h := range hooksList {
+			he, _ := h.(map[string]interface{})
+			if he == nil {
+				continue
+			}
+			if cmd, _ := he["command"].(string); cmd == hookPath {
+				already = true
+			}
+		}
+	}
+
+	if !already {
+		permList = append(permList, permEntry)
+		hooks["PermissionRequest"] = permList
+	}
+
+	// Write back with backup
+	updated, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	updated = append(updated, '\n')
+
+	backupPath := settingsPath + ".bak"
+	os.WriteFile(backupPath, data, 0644) // best-effort backup
+
+	if err := os.WriteFile(settingsPath, updated, 0644); err != nil {
+		os.WriteFile(settingsPath, data, 0644) // restore on failure
+		return fmt.Errorf("write %s: %w", settingsPath, err)
+	}
+
+	if already {
+		fmt.Println("Hook already registered in ~/.claude/settings.json")
+	} else {
+		fmt.Println("Registered in ~/.claude/settings.json")
 	}
 	return nil
 }
@@ -90,41 +195,214 @@ func removeClaudeCodeHook() error {
 	if err := os.Remove(hookPath); err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	fmt.Println("Removed hook script")
 	return nil
 }
 
 // ─── OpenCode ───────────────────────────────────────────────────
+//
+// OpenCode plugins: TypeScript files in ~/.config/opencode/plugins/,
+// auto-discovered. Each exports a Plugin function that hooks into
+// "tool.execute.before" to intercept bash commands.
+
+// backtick helper for TypeScript template literals in Go strings
+var bt = string(rune(96)) // `
+
+var openCodePlugin = `import type { Plugin } from "@opencode-ai/plugin"
+import { appendFileSync, mkdirSync, existsSync, readdirSync, unlinkSync } from "node:fs"
+import { join } from "node:path"
+import { homedir } from "node:os"
+
+const LOG_DIR = join(homedir(), ".config", "opencode", "logs")
+
+function log(level: string, command: string, reason?: string) {
+  try {
+    if (!existsSync(LOG_DIR)) mkdirSync(LOG_DIR, { recursive: true })
+    const date = new Date().toISOString().slice(0, 10)
+    const file = join(LOG_DIR, "permission-gate-" + date + ".log")
+    const entry = JSON.stringify({ ts: new Date().toISOString(), level, command, reason }) + "\n"
+    appendFileSync(file, entry, "utf-8")
+    cleanupOldLogs(7)
+  } catch { /* silent */ }
+}
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000
+
+function cleanupOldLogs(keepDays: number) {
+  try {
+    if (!existsSync(LOG_DIR)) return
+    const cutoff = Date.now() - keepDays * MS_PER_DAY
+    for (const name of readdirSync(LOG_DIR)) {
+      if (!name.startsWith("permission-gate-")) continue
+      const datePart = name.slice(17, 27) // "permission-gate-YYYY-MM-DD.log" → "YYYY-MM-DD"
+      const t = Date.parse(datePart)
+      if (Number.isFinite(t) && t < cutoff) {
+        unlinkSync(join(LOG_DIR, name))
+      }
+    }
+  } catch { /* silent */ }
+}
+
+export const PermissionGatePlugin: Plugin = async ({ $ }) => {
+  try {
+    await $` + bt + `which pgate` + bt + `.quiet()
+  } catch {
+    console.warn("[pgate] pgate binary not found in PATH — plugin disabled")
+    return {}
+  }
+
+  return {
+    "tool.execute.before": async (input) => {
+      const tool = String(input?.tool ?? "").toLowerCase()
+      if (tool !== "bash" && tool !== "shell") return
+
+      const args = input?.args
+      if (!args || typeof args !== "object") return
+      const command = (args as Record<string, unknown>).command
+      if (typeof command !== "string" || !command) return
+
+      try {
+        const result = await $` + bt + `pgate check --json ${command}` + bt + `.quiet().nothrow()
+        const parsed = JSON.parse(String(result.stdout).trim())
+        const lvl = parsed.final?.Level ?? parsed.final?.level
+
+        if (lvl === 1) {
+          const msg = "Permission Gate: " + (parsed.final?.reason ?? "denied")
+          log("deny", command, msg)
+          return { block: true, reason: msg }
+        }
+        if (lvl === 2) {
+          log("ask", command)
+          return  // let OpenCode's default permission flow handle it
+        }
+        log("allow", command)
+      } catch {
+        // fallthrough
+      }
+    },
+  }
+}
+`
 
 func installOpenCodeHook(binary string) error {
-	content := fmt.Sprintf(`import type { ExtensionAPI } from "@opencode/plugin-api";
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	pluginDir := filepath.Join(home, ".config", "opencode", "plugins")
+	if err := os.MkdirAll(pluginDir, 0755); err != nil {
+		return err
+	}
 
-export default function (api: ExtensionAPI) {
-  api.on("tool:bash", async (event, ctx) => {
-    const cmd = event.input.command;
-    const proc = Bun.spawn(["%s", "check", "--json"], {
-      stdin: new TextEncoder().encode(cmd),
-    });
-    const out = await new Response(proc.stdout).text();
-    const result = JSON.parse(out);
-    if (result.final.level === "deny") {
-      return { block: true, reason: result.final.reason || "Blocked by permission gate" };
-    }
-    if (result.final.level === "ask") {
-      const ok = await ctx.ui.confirm("Run this command?", cmd);
-      if (!ok) return { block: true, reason: "Cancelled by user" };
-    }
-  });
-}
-`, binary)
-	_ = content
-	return fmt.Errorf("OpenCode hook not yet implemented")
+	pluginPath := filepath.Join(pluginDir, "permission-gate.ts")
+	if err := os.WriteFile(pluginPath, []byte(openCodePlugin), 0644); err != nil {
+		return err
+	}
+	fmt.Println("Plugin written to", pluginPath)
+	return nil
 }
 
 func removeOpenCodeHook() error {
-	return fmt.Errorf("OpenCode hook not yet implemented")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	pluginPath := filepath.Join(home, ".config", "opencode", "plugins", "permission-gate.ts")
+	if err := os.Remove(pluginPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	fmt.Println("Removed OpenCode plugin")
+	return nil
 }
 
-// ─── Pi Agent ────────────────────────────────────────────────────
+// ─── Pi Agent ───────────────────────────────────────────────────
+//
+// Pi Agent extensions: TypeScript files in ~/.pi/agent/extensions/,
+// auto-discovered. Each exports a default function (pi) that hooks
+// into "tool_call" to intercept bash commands.
+
+const piAgentExtension = `// Permission Gate — Pi extension
+// Installed by: pgate hook install pi
+
+import { execSync } from "node:child_process";
+import { appendFileSync, mkdirSync, existsSync, readdirSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
+
+const LOG_DIR = join(homedir(), ".pi", "agent", "logs");
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function log(level: string, command: string, reason?: string) {
+  try {
+    if (!existsSync(LOG_DIR)) mkdirSync(LOG_DIR, { recursive: true });
+    const date = new Date().toISOString().slice(0, 10);
+    const file = join(LOG_DIR, "permission-gate-" + date + ".log");
+    const entry = JSON.stringify({ ts: new Date().toISOString(), level, command, reason }) + "\n";
+    appendFileSync(file, entry, "utf-8");
+    cleanupOldLogs(7);
+  } catch { /* silent */ }
+}
+
+function cleanupOldLogs(keepDays: number) {
+  try {
+    if (!existsSync(LOG_DIR)) return;
+    const cutoff = Date.now() - keepDays * MS_PER_DAY;
+    for (const name of readdirSync(LOG_DIR)) {
+      if (!name.startsWith("permission-gate-")) continue;
+      const datePart = name.slice(17, 27);
+      const t = Date.parse(datePart);
+      if (Number.isFinite(t) && t < cutoff) {
+        unlinkSync(join(LOG_DIR, name));
+      }
+    }
+  } catch { /* silent */ }
+}
+
+export default function (pi: any) {
+  pi.on("tool_call", async (event: any, ctx: any) => {
+    if (event.toolName !== "bash") return;
+
+    const command = event.input.command as string;
+    if (!command) return;
+
+    try {
+      const out = execSync("pgate check --json " + JSON.stringify(command), {
+        encoding: "utf-8",
+      });
+      const result = JSON.parse(out);
+      const lvl = result.final?.Level ?? result.final?.level;
+
+      if (lvl === 1) {
+        log("deny", command, result.final?.reason);
+        if (ctx.hasUI) {
+          const ok = await ctx.ui.confirm(
+            "Command denied by Permission Gate",
+            command,
+          );
+          if (!ok) return { block: true, reason: "Blocked by Permission Gate" };
+        }
+        return { block: true, reason: "Blocked by Permission Gate" };
+      }
+
+      if (lvl === 2) {
+        log("ask", command);
+        if (ctx.hasUI) {
+          const ok = await ctx.ui.confirm(
+            "Command needs confirmation",
+            command,
+          );
+          if (!ok) return { block: true, reason: "Cancelled by user" };
+        }
+        return;
+      }
+
+      log("allow", command);
+    } catch {
+      // fallthrough on error
+    }
+  });
+}
+`
 
 const piHookDir = ".pi/agent/extensions/permission-gate"
 
@@ -138,42 +416,11 @@ func installPiAgentHook(binary string) error {
 		return err
 	}
 
-	// Pi agent extensions are TypeScript — generate a small wrapper
-	content := fmt.Sprintf(`// Permission Gate — Pi Agent extension
-// Installed by: pgate hook install pi-agent
-
-import { execSync } from "node:child_process";
-
-export default function (pi) {
-  pi.on("tool_call", async (event, ctx) => {
-    if (event.toolName !== "bash") return;
-    const cmd = event.input.command;
-    try {
-      const out = execSync("%s check --json " + JSON.stringify(cmd), { encoding: "utf-8" });
-      const result = JSON.parse(out);
-      if (result.final.level === "deny") {
-        if (ctx.hasUI) {
-          const ok = await ctx.ui.confirm("Command is denied by permission gate", cmd);
-          if (!ok) return { block: true, reason: "Blocked by permission gate" };
-        }
-        return { block: true, reason: "Blocked by permission gate" };
-      }
-      if (result.final.level === "ask") {
-        if (ctx.hasUI) {
-          const ok = await ctx.ui.confirm("Command needs confirmation", cmd);
-          if (!ok) return { block: true, reason: "Cancelled by user" };
-        }
-        return;
-      }
-    } catch (e) {
-      // fallthrough on error
-    }
-  });
-}
-`, binary)
-	if err := os.WriteFile(filepath.Join(dir, "index.ts"), []byte(content), 0644); err != nil {
+	indexPath := filepath.Join(dir, "index.ts")
+	if err := os.WriteFile(indexPath, []byte(piAgentExtension), 0644); err != nil {
 		return err
 	}
+	fmt.Println("Extension written to", indexPath)
 	return nil
 }
 
@@ -186,40 +433,6 @@ func removePiAgentHook() error {
 	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	fmt.Println("Removed Pi Agent extension")
 	return nil
-}
-
-// Ensure the binary is in PATH for hook contexts
-func ensureInPATH(binary string) error {
-	// Symlink into ~/.local/bin/ if not already in PATH
-	home, _ := os.UserHomeDir()
-	localBin := filepath.Join(home, ".local", "bin")
-	target := filepath.Join(localBin, "permission-gate")
-
-	if _, err := os.Stat(target); os.IsNotExist(err) {
-		if err := os.MkdirAll(localBin, 0755); err != nil {
-			return err
-		}
-		return os.Symlink(binary, target)
-	}
-	return nil
-}
-
-// isInteractive returns true if stdin is a terminal (user is running directly)
-func isInteractive() bool {
-	stat, _ := os.Stdin.Stat()
-	return (stat.Mode() & os.ModeCharDevice) != 0
-}
-
-// runPgateCheck calls pgate check --json and returns the result.
-func runPgateCheck(cmd string) (string, error) {
-	binary, err := os.Executable()
-	if err != nil {
-		return "", err
-	}
-	out, err := exec.Command(binary, "check", "--json", cmd).Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
 }

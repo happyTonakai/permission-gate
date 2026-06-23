@@ -64,7 +64,7 @@ func addPatterns(dst *[]pattern, cmds []string, source string) {
 func (e *Engine) Check(cmd analyze.ExtractedCommand) verdict.Verdict {
 	// 1. Check deny patterns
 	for _, p := range e.denyPatterns {
-		if cmd.IsPrefixMatch(p.tokens) {
+		if cmd.Match(p.tokens) {
 			return verdict.Deny(p.source+" deny: "+p.raw, p.raw)
 		}
 	}
@@ -80,14 +80,14 @@ func (e *Engine) Check(cmd analyze.ExtractedCommand) verdict.Verdict {
 
 	// 3. Check ask patterns (before allow, so explicit ask overrides broad allow)
 	for _, p := range e.askPatterns {
-		if cmd.IsPrefixMatch(p.tokens) {
+		if cmd.Match(p.tokens) {
 			return verdict.Ask(p.source + " ask: " + p.raw)
 		}
 	}
 
 	// 4. Check allow patterns
 	for _, p := range e.allowPatterns {
-		if cmd.IsPrefixMatch(p.tokens) {
+		if cmd.Match(p.tokens) {
 			return verdict.Allow(p.source+" allow: "+p.raw, p.raw)
 		}
 	}

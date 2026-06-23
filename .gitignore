@@ -20,3 +20,4 @@ cmd/batch-compare/batch-compare
 
 # Project references (cloned for reference)
 _ref-*/
+.serena/
