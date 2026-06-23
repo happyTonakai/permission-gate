@@ -1,0 +1,23 @@
+# Binaries
+pgate
+/pgate
+cmd/pgate/pgate
+*.test
+*.prof
+
+# Test binary
+cmd/batch-compare/batch-compare
+
+# Temp
+/tmp/
+
+# Editor
+.DS_Store
+*.swp
+*.swo
+
+# Configuration backups
+*.bak
+
+# Project references (cloned for reference)
+_ref-*/
