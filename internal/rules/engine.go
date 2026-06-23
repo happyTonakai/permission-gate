@@ -20,6 +20,7 @@ type Engine struct {
 type pattern struct {
 	tokens []string // split rule, e.g. "git log" → ["git", "log"]
 	raw    string   // original rule text
+	source string   // "builtin", "global", "project"
 }
 
 // New creates a rule engine from config plus built-in rules.
@@ -28,24 +29,24 @@ func New(cfg *config.Config, builtinAllow, builtinDeny, builtinAsk []string, bui
 		denyFlags: make(map[string][]string),
 	}
 
-	// Merge built-in + user-config rules
-	allAllow := append(builtinAllow, cfg.Allow.Commands...)
-	allDeny := append(builtinDeny, cfg.Deny.Commands...)
-	allAsk := append(builtinAsk, cfg.Ask.Commands...)
+	// Built-in patterns
+	addPatterns(&e.allowPatterns, builtinAllow, "builtin")
+	addPatterns(&e.denyPatterns, builtinDeny, "builtin")
+	addPatterns(&e.askPatterns, builtinAsk, "builtin")
 
-	for _, cmd := range allAllow {
-		e.allowPatterns = append(e.allowPatterns, pattern{tokens: splitRule(cmd), raw: cmd})
-	}
-	for _, cmd := range allDeny {
-		e.denyPatterns = append(e.denyPatterns, pattern{tokens: splitRule(cmd), raw: cmd})
-	}
-	for _, cmd := range allAsk {
-		e.askPatterns = append(e.askPatterns, pattern{tokens: splitRule(cmd), raw: cmd})
-	}
+	// Global config patterns
+	addPatterns(&e.allowPatterns, cfg.GlobalRaw.Allow.Commands, "global")
+	addPatterns(&e.denyPatterns, cfg.GlobalRaw.Deny.Commands, "global")
+	addPatterns(&e.askPatterns, cfg.GlobalRaw.Ask.Commands, "global")
+
+	// Project config patterns
+	addPatterns(&e.allowPatterns, cfg.ProjectRaw.Allow.Commands, "project")
+	addPatterns(&e.denyPatterns, cfg.ProjectRaw.Deny.Commands, "project")
+	addPatterns(&e.askPatterns, cfg.ProjectRaw.Ask.Commands, "project")
 
 	for cmd, flags := range cfg.Deny.Flags {
-	builtinDenyFlags[cmd] = append(builtinDenyFlags[cmd], flags...)
-		}
+		builtinDenyFlags[cmd] = append(builtinDenyFlags[cmd], flags...)
+	}
 	for cmd, flags := range builtinDenyFlags {
 		e.denyFlags[cmd] = append(e.denyFlags[cmd], flags...)
 	}
@@ -53,12 +54,18 @@ func New(cfg *config.Config, builtinAllow, builtinDeny, builtinAsk []string, bui
 	return e
 }
 
+func addPatterns(dst *[]pattern, cmds []string, source string) {
+	for _, cmd := range cmds {
+		*dst = append(*dst, pattern{tokens: splitRule(cmd), raw: cmd, source: source})
+	}
+}
+
 // Check evaluates a single extracted command against the rules.
 func (e *Engine) Check(cmd analyze.ExtractedCommand) verdict.Verdict {
 	// 1. Check deny patterns
 	for _, p := range e.denyPatterns {
 		if cmd.IsPrefixMatch(p.tokens) {
-			return verdict.Deny("command on deny list", p.raw)
+			return verdict.Deny(p.source+" deny: "+p.raw, p.raw)
 		}
 	}
 
@@ -71,17 +78,17 @@ func (e *Engine) Check(cmd analyze.ExtractedCommand) verdict.Verdict {
 		}
 	}
 
-	// 3. Check allow patterns
-	for _, p := range e.allowPatterns {
+	// 3. Check ask patterns (before allow, so explicit ask overrides broad allow)
+	for _, p := range e.askPatterns {
 		if cmd.IsPrefixMatch(p.tokens) {
-			return verdict.Allow("command on allow list", p.raw)
+			return verdict.Ask(p.source + " ask: " + p.raw)
 		}
 	}
 
-	// 4. Check ask patterns
-	for _, p := range e.askPatterns {
+	// 4. Check allow patterns
+	for _, p := range e.allowPatterns {
 		if cmd.IsPrefixMatch(p.tokens) {
-			return verdict.Ask("command on ask list")
+			return verdict.Allow(p.source+" allow: "+p.raw, p.raw)
 		}
 	}
 
@@ -105,8 +112,7 @@ func (e *Engine) Evaluate(rawCmd string) *verdict.Result {
 		return result
 	}
 
-	anyDeny := false
-	anyAsk := false
+	var deniedCmds, askedCmds []string
 
 	for _, cmd := range commands {
 		v := e.Check(cmd)
@@ -117,19 +123,19 @@ func (e *Engine) Evaluate(rawCmd string) *verdict.Result {
 		})
 		switch v.Level {
 		case verdict.LevelDeny:
-			anyDeny = true
+			deniedCmds = append(deniedCmds, cmd.Raw)
 		case verdict.LevelAsk:
-			anyAsk = true
+			askedCmds = append(askedCmds, cmd.Raw)
 		}
 	}
 
 	switch {
-	case anyDeny:
-		result.Final = verdict.Deny("one or more commands are denied", "")
-	case !anyAsk:
+	case len(deniedCmds) > 0:
+		result.Final = verdict.Deny("denied: "+strings.Join(deniedCmds, ", "), "")
+	case len(askedCmds) == 0:
 		result.Final = verdict.Allow("all commands are allowed", "")
 	default:
-		result.Final = verdict.Ask("some commands need confirmation")
+		result.Final = verdict.Ask("needs confirmation: "+strings.Join(askedCmds, ", "))
 	}
 
 	return result

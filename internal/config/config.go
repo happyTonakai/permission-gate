@@ -41,6 +41,10 @@ type Config struct {
 	Allow CommandRules
 	Deny  CommandRules
 	Ask   CommandRules
+
+	// Raw configs retained for rule source tracking (builtin / global / project).
+	GlobalRaw  RawConfig
+	ProjectRaw RawConfig
 }
 
 // ProjectOverride holds project-level settings.
@@ -61,28 +65,29 @@ func ResolveConfig(cwd string) (*Config, MergeMode, error) {
 
 	project, mode := loadProjectConfig(cwd)
 
+	resolved := &Config{
+		GlobalRaw:  *global,
+		ProjectRaw: project,
+	}
+
 	switch mode {
 	case MergeOverwrite:
-		return &Config{
-			Allow: project.Allow,
-			Deny:  project.Deny,
-			Ask:   project.Ask,
-		}, mode, nil
+		resolved.Allow = project.Allow
+		resolved.Deny = project.Deny
+		resolved.Ask = project.Ask
 
 	case MergeAppend:
-		return &Config{
-			Allow: mergeRules(global.Allow, project.Allow),
-			Deny:  mergeRules(global.Deny, project.Deny),
-			Ask:   mergeRules(global.Ask, project.Ask),
-		}, mode, nil
+		resolved.Allow = mergeRules(global.Allow, project.Allow)
+		resolved.Deny = mergeRules(global.Deny, project.Deny)
+		resolved.Ask = mergeRules(global.Ask, project.Ask)
 
 	default: // prepend
-		return &Config{
-			Allow: mergeRules(project.Allow, global.Allow),
-			Deny:  mergeRules(project.Deny, global.Deny),
-			Ask:   mergeRules(project.Ask, global.Ask),
-		}, mode, nil
+		resolved.Allow = mergeRules(project.Allow, global.Allow)
+		resolved.Deny = mergeRules(project.Deny, global.Deny)
+		resolved.Ask = mergeRules(project.Ask, global.Ask)
 	}
+
+	return resolved, mode, nil
 }
 
 func mergeRules(primary, secondary CommandRules) CommandRules {

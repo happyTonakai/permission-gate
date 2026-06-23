@@ -1,6 +1,7 @@
 package analyze
 
 import (
+	"path/filepath"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -263,15 +264,21 @@ func (c ExtractedCommand) HasFlag(flag string) bool {
 }
 
 // IsPrefixMatch checks if the command starts with the given prefix tokens.
+// When the first token is a path (/bin/ls, ./ls, ../tools/bin/ls, ~/bin/ls),
+// also matches the basename (ls).
 func (c ExtractedCommand) IsPrefixMatch(prefix []string) bool {
-	if len(prefix) == 0 {
-		return false
-	}
-	if len(prefix) > len(c.Tokens) {
+	if len(prefix) == 0 || len(prefix) > len(c.Tokens) {
 		return false
 	}
 	for i, p := range prefix {
 		if c.Tokens[i] != p {
+			// Path-like token: try matching basename instead
+			if i == 0 {
+				base := filepath.Base(c.Tokens[0])
+				if base != c.Tokens[0] && base != "." && base == p {
+					continue
+				}
+			}
 			return false
 		}
 	}

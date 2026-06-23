@@ -708,6 +708,7 @@ func builtinShell() []string {
 func utilityCommands() []string {
 	return []string{
 		// Wrappers
+		"rtk",
 		"timeout", "time", "nice",
 		"nohup", "stdbuf",
 		"chronic", "ifne",

@@ -348,3 +348,29 @@ func TestBackgroundCommand(t *testing.T) {
 		t.Fatalf("expected 1 command, got %d", len(cmds))
 	}
 }
+
+func TestPathPrefixMatch(t *testing.T) {
+	tests := []struct {
+		tokens []string
+		prefix []string
+		want   bool
+	}{
+		{[]string{"/bin/ls", "-la"}, []string{"ls"}, true},
+		{[]string{"/bin/ls", "-la"}, []string{"/bin/ls"}, true},
+		{[]string{"/bin/ls", "-la"}, []string{"cat"}, false},
+		{[]string{"./ls", "-la"}, []string{"ls"}, true},
+		{[]string{"../bin/ls", "-la"}, []string{"ls"}, true},
+		{[]string{"~/bin/ls", "-la"}, []string{"ls"}, true},
+		{[]string{"/usr/bin/git", "log"}, []string{"git", "log"}, true},
+		{[]string{"/usr/bin/git", "push"}, []string{"git", "log"}, false},
+		{[]string{"ls"}, []string{"ls"}, true},           // bare command, no path
+	}
+
+	for _, tt := range tests {
+		cmd := ExtractedCommand{Tokens: tt.tokens}
+		got := cmd.IsPrefixMatch(tt.prefix)
+		if got != tt.want {
+			t.Errorf("IsPrefixMatch(%v, %v) = %v, want %v", tt.tokens, tt.prefix, got, tt.want)
+		}
+	}
+}

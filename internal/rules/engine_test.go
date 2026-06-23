@@ -228,6 +228,9 @@ func TestForLoop(t *testing.T) {
 func TestUserDenyOverridesBuiltinAllow(t *testing.T) {
 	cfg := &config.Config{
 		Deny: config.CommandRules{Commands: []string{"ls"}},
+		GlobalRaw: config.RawConfig{
+			Deny: config.CommandRules{Commands: []string{"ls"}},
+		},
 	}
 	e := New(cfg, []string{"ls"}, nil, nil, nil)
 
@@ -240,6 +243,9 @@ func TestUserDenyOverridesBuiltinAllow(t *testing.T) {
 func TestUserAllowExtendsBuiltin(t *testing.T) {
 	cfg := &config.Config{
 		Allow: config.CommandRules{Commands: []string{"my-tool"}},
+		GlobalRaw: config.RawConfig{
+			Allow: config.CommandRules{Commands: []string{"my-tool"}},
+		},
 	}
 	e := New(cfg, nil, nil, nil, nil)
 
