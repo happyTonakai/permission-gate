@@ -215,12 +215,20 @@ import { homedir } from "node:os"
 
 const LOG_DIR = join(homedir(), ".config", "opencode", "logs")
 
+function localTS() {
+  const d = new Date(), tzo = -d.getTimezoneOffset()
+  const pad = (n:number) => String(n).padStart(2, '0')
+  return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + 'T' +
+    pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) +
+    (tzo >= 0 ? '+' : '-') + pad(Math.floor(tzo/60)) + ':' + pad(tzo%60)
+}
+
 function log(level: string, command: string, reason?: string) {
   try {
     if (!existsSync(LOG_DIR)) mkdirSync(LOG_DIR, { recursive: true })
     const date = new Date().toISOString().slice(0, 10)
     const file = join(LOG_DIR, "permission-gate-" + date + ".log")
-    const entry = JSON.stringify({ ts: new Date().toISOString(), level, command, reason }) + "\n"
+    const entry = JSON.stringify({ ts: localTS(), level, command, reason }) + "\n"
     appendFileSync(file, entry, "utf-8")
     cleanupOldLogs(7)
   } catch { /* silent */ }
@@ -264,7 +272,7 @@ export const PermissionGatePlugin: Plugin = async ({ $ }) => {
       try {
         const result = await $` + bt + `pgate check --json ${command}` + bt + `.quiet().nothrow()
         const parsed = JSON.parse(String(result.stdout).trim())
-        const lvl = parsed.final?.Level ?? parsed.final?.level
+        const lvl = parsed.final?.level
 
         if (lvl === 1) {
           const msg = "Permission Gate: " + (parsed.final?.reason ?? "denied")
@@ -332,12 +340,20 @@ import { homedir } from "node:os";
 const LOG_DIR = join(homedir(), ".pi", "agent", "logs");
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
+function localTS() {
+  const d = new Date(), tzo = -d.getTimezoneOffset();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + 'T' +
+    pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) +
+    (tzo >= 0 ? '+' : '-') + pad(Math.floor(tzo/60)) + ':' + pad(tzo%60);
+}
+
 function log(level: string, command: string, reason?: string) {
   try {
     if (!existsSync(LOG_DIR)) mkdirSync(LOG_DIR, { recursive: true });
     const date = new Date().toISOString().slice(0, 10);
     const file = join(LOG_DIR, "permission-gate-" + date + ".log");
-    const entry = JSON.stringify({ ts: new Date().toISOString(), level, command, reason }) + "\n";
+    const entry = JSON.stringify({ ts: localTS(), level, command, reason }) + "\n";
     appendFileSync(file, entry, "utf-8");
     cleanupOldLogs(7);
   } catch { /* silent */ }
@@ -370,7 +386,7 @@ export default function (pi: any) {
         encoding: "utf-8",
       });
       const result = JSON.parse(out);
-      const lvl = result.final?.Level ?? result.final?.level;
+      const lvl = result.final?.level;
 
       if (lvl === 1) {
         log("deny", command, result.final?.reason);
@@ -379,9 +395,10 @@ export default function (pi: any) {
             "Command denied by Permission Gate",
             command,
           );
-          if (!ok) return { block: true, reason: "Blocked by Permission Gate" };
+          if (ok) return; // user overrode → pass through
+          return { block: true, reason: "Blocked by Permission Gate" };
         }
-        return { block: true, reason: "Blocked by Permission Gate" };
+        return { block: true, reason: "Blocked by Permission Gate (no UI)" };
       }
 
       if (lvl === 2) {
@@ -392,8 +409,9 @@ export default function (pi: any) {
             command,
           );
           if (!ok) return { block: true, reason: "Cancelled by user" };
+          return; // user approved → pass through
         }
-        return;
+        return; // no UI → pass through, let Pi's default flow handle it
       }
 
       log("allow", command);
