@@ -270,7 +270,18 @@ export const PermissionGatePlugin: Plugin = async ({ $ }) => {
       if (typeof command !== "string" || !command) return
 
       try {
-        const result = await $` + bt + `pgate check --json ${command}` + bt + `.quiet().nothrow()
+        // Pass the raw multi-line command via stdin. Embedding it as a
+        // shell argument breaks on newlines: bash inside double quotes
+        // treats \n as two literal characters, not a real newline, so
+        // pgate receives a single line and mvdan/sh fails to parse
+        // constructs like "for x in y; do" followed by an indented body.
+        // pgate's check subcommand reads the command from stdin when
+        // no positional arg is given.
+        const proc = $` + bt + `pgate check --json` + bt + `.quiet().nothrow()
+        const w = proc.stdin.getWriter()
+        await w.write(new TextEncoder().encode(command))
+        await w.close()
+        const result = await proc
         const parsed = JSON.parse(String(result.stdout).trim())
         const lvl = parsed.final?.level
 
@@ -382,8 +393,16 @@ export default function (pi: any) {
     if (!command) return;
 
     try {
-      const out = execSync("pgate check --json " + JSON.stringify(command), {
+      // Pass the raw multi-line command via stdin. Encoding the command
+      // into a shell argument (e.g. via JSON.stringify) breaks on newlines:
+      // bash inside double quotes treats \n as two literal characters, not
+      // a real newline, so pgate receives a single line and mvdan/sh fails
+      // to parse constructs like "for x in y; do" followed by an indented
+      // body. pgate's check subcommand already reads the command from
+      // stdin when no positional arg is given.
+      const out = execSync("pgate check --json", {
         encoding: "utf-8",
+        input: command,
       });
       const result = JSON.parse(out);
       const lvl = result.final?.level;
