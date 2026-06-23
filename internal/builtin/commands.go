@@ -721,7 +721,7 @@ func builtinShell() []string {
 func utilityCommands() []string {
 	return []string{
 		// Wrappers
-		"rtk",
+		"rtk", "pgate",
 		"timeout", "time", "nice",
 		"nohup", "stdbuf",
 		"chronic", "ifne",
