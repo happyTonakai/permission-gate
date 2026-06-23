@@ -1,5 +1,4 @@
 # Binaries
-pgate
 /pgate
 cmd/pgate/pgate
 *.test
