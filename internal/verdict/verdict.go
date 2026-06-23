@@ -24,9 +24,9 @@ func (l Level) String() string {
 }
 
 type Verdict struct {
-	Level   Level
-	Reason  string
-	Matched string // rule or pattern that triggered this verdict
+	Level   Level  `json:"level"`
+	Reason  string `json:"reason"`
+	Matched string `json:"matched"`
 }
 
 func Allow(reason, matched string) Verdict {
