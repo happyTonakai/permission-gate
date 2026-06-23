@@ -102,8 +102,10 @@ func (e *Engine) Evaluate(rawCmd string) *verdict.Result {
 
 	commands, err := analyze.ExtractCommands(rawCmd)
 	if err != nil {
-		// Parse error — deny to be safe
-		result.Final = verdict.Deny("failed to parse command: "+err.Error(), "")
+		// Parse error — ask so the user can confirm manually.
+		// We never silently deny: an unparseable shell is not necessarily
+		// dangerous, and the user knows what they meant to run.
+		result.Final = verdict.Ask("failed to parse command: "+err.Error())
 		return result
 	}
 

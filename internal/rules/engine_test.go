@@ -162,10 +162,13 @@ func TestEmptyCommandIsAllow(t *testing.T) {
 	}
 }
 
-func TestParseErrorIsDeny(t *testing.T) {
+func TestParseErrorIsAsk(t *testing.T) {
+	// A shell we can't parse isn't necessarily dangerous — the user
+	// knows what they meant. Falling back to ask lets them confirm
+	// manually instead of silently denying.
 	result := engine().Evaluate("echo 'unclosed")
-	if result.Final.Level != verdict.LevelDeny {
-		t.Errorf("expected deny for parse error, got %s", result.Final.Level)
+	if result.Final.Level != verdict.LevelAsk {
+		t.Errorf("expected ask for parse error, got %s", result.Final.Level)
 	}
 }
 
