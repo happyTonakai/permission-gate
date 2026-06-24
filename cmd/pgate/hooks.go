@@ -408,16 +408,12 @@ export default function (pi: any) {
       const lvl = result.final?.level;
 
       if (lvl === 1) {
+        // Deny means deny — block immediately, no popup. Showing a confirm
+        // dialog here would make Deny indistinguishable from Ask, and a
+        // "user override" path would let denied commands run anyway.
+        const reason = "Permission Gate: " + (result.final?.reason ?? "denied");
         log("deny", command, result.final?.reason);
-        if (ctx.hasUI) {
-          const ok = await ctx.ui.confirm(
-            "Command denied by Permission Gate",
-            command,
-          );
-          if (ok) return; // user overrode → pass through
-          return { block: true, reason: "Blocked by Permission Gate" };
-        }
-        return { block: true, reason: "Blocked by Permission Gate (no UI)" };
+        return { block: true, reason };
       }
 
       if (lvl === 2) {
