@@ -74,14 +74,30 @@ func wildcardAllow() []string {
 // DenyFlags returns built-in flag-level deny rules.
 func DenyFlags() map[string][]string {
 	return map[string][]string{
-		"find":  {"-exec", "-execdir", "-delete", "-ok", "-okdir", "-fls", "-fprint", "-fprintf", "-print", "-printf"},
+		// find deny flags: command-execution and deletion vectors.
+		// Output-only flags (-print, -printf, -fls, -fprint, -fprintf) are
+		// safe: they cannot execute commands or delete files, equivalent to
+		// shell redirection. Previously lumped in here, which made `find ...
+		// -print` get denied (contradictory, since -print is find's default
+		// action). -ok is kept on the deny list because it is semantically
+		// equivalent to -exec (runs a command per match); the fact that it
+		// prompts is irrelevant in an agent context where the LLM cannot
+		// answer find's interactive prompt anyway, so denying it costs
+		// nothing and closes the "use -ok to bypass -exec deny" path.
+		"find":  {"-exec", "-execdir", "-delete", "-ok", "-okdir"},
 		"sed":   {"-i", "--in-place"},
 		"tar":   {"--to-command", "-I", "--use-compress-program", "--checkpoint-action"},
 		"curl":  {"--output", "-o", "--remote-name", "-O", "--upload-file", "-T"},
 		"wget":  {"-O", "--output-document", "-o", "--output-file"},
 		"dd":    {"if=", "of="},
 		"git":    {},
-		"docker": {"exec", "-it", "--interactive", "--tty"},
+		// docker deny flags: only flag-level vectors. Subcommand-level
+		// deny (e.g. "docker exec" running arbitrary commands inside a
+		// container) lives in dockerDestructive() as a whole-command rule,
+		// because flag-level matching cannot see subcommand names. The
+		// earlier "exec" entry here was dead code: flagMatches rejects any
+		// spec entry that does not start with '-'.
+		"docker": {"-it", "--interactive", "--tty"},
 		"kill":  {"-9", "--signal"},
 		"python": {"-c"},
 		"chmod":  {"-R", "--recursive"},
@@ -960,6 +976,7 @@ func dockerDestructive() []string {
 	return []string{
 		"docker rmi",
 		"docker rm",
+		"docker exec",
 		"docker system prune",
 		"docker system df",
 		"docker volume rm",

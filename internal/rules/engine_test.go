@@ -328,8 +328,13 @@ func TestIncludeFlagsAnyOf(t *testing.T) {
 }
 
 func TestIncludeFlagsBundleExpansion(t *testing.T) {
-	// Spec written as `-rf` should still match commands that supply the
-	// individual letters, thanks to short-option bundle expansion.
+	// Spec written as `-rf` matches commands that supply the bundled
+	// letters together (short-option bundle expansion). The expansion
+	// requires ALL bundled letters to be present in the command's flag
+	// set, not just any of them. So `rm -r` (only -r) and `rm -f`
+	// (only -f) do NOT satisfy the spec — the user wrote `-rf` meaning
+	// "the command uses -r AND -f together". To allow either flag alone,
+	// list them separately: include_flags = ["-r", "-f"].
 	cfg := &config.Config{
 		GlobalRaw: config.RawConfig{
 			Allow: config.RawRules{Commands: []any{
@@ -339,10 +344,15 @@ func TestIncludeFlagsBundleExpansion(t *testing.T) {
 	}
 	e := newEngine(t, cfg, config.MergePrepend, nil, nil, nil, nil)
 
+	// Bundle satisfied (all letters present): allow.
 	assertAllowed(t, e, "rm -rf /tmp/foo")
-	assertAllowed(t, e, "rm -r /tmp/foo") // -r is part of -rf bundle
-	assertAllowed(t, e, "rm -f /tmp/foo") // -f is part of -rf bundle
 	assertAllowed(t, e, "rm -fr /tmp/foo")
+	assertAllowed(t, e, "rm -r -f /tmp/foo") // -r and -f both present in flagSet
+
+	// Partial bundle (only one letter present): spec does not match.
+	// Falls through to unknown → ask, even though rm itself is dangerous.
+	assertAsked(t, e, "rm -r /tmp/foo")
+	assertAsked(t, e, "rm -f /tmp/foo")
 	assertAsked(t, e, "rm -i /tmp/foo") // -i not in bundle
 }
 
@@ -652,5 +662,62 @@ func assertAsked(t *testing.T, e *Engine, cmd string) {
 	result := e.Evaluate(cmd)
 	if result.Final.Level != verdict.LevelAsk {
 		t.Errorf("expected ask for %q, got %s", cmd, result.Final.Level)
+	}
+}
+
+// TestFlagMatches covers the spec-side flag matcher in isolation. The
+// behaviors below are guaranteed by flagMatches and exercised only
+// indirectly through higher-level engine tests; pinning them down here
+// makes future refactors safe.
+func TestFlagMatches(t *testing.T) {
+	set := func(flags ...string) map[string]struct{} {
+		s := make(map[string]struct{}, len(flags))
+		for _, f := range flags {
+			s[f] = struct{}{}
+		}
+		return s
+	}
+
+	cases := []struct {
+		name    string
+		flagSet map[string]struct{}
+		spec    string
+		want    bool
+	}{
+		// Exact match — both literal bundle and individual flag.
+		{"exact literal bundle", set("-rf"), "-rf", true},
+		{"exact single flag", set("-r", "-f"), "-r", true},
+
+		// Bundle expansion: ALL letters must be present.
+		{"bundle all letters present", set("-r", "-f"), "-rf", true},
+		{"bundle missing one letter", set("-r"), "-rf", false},
+		{"bundle missing other letter", set("-f"), "-rf", false},
+		{"bundle opposite order", set("-f", "-r"), "-fr", true},
+
+		// Long options only match verbatim.
+		{"long option exact", set("-exec"), "-exec", true},
+		{"long option missing", set("-e", "-x", "-c"), "-exec", false},
+		{"double-dash exact", set("--in-place"), "--in-place", true},
+		{"double-dash missing", set("--in"), "--in-place", false},
+
+		// Non-flag spec entries only match via exact path.
+		// Subcommand names like "exec" never end up in a command's
+		// flagSet (looksLikeFlag requires '-'), so they only match
+		// when present literally — which never happens for subcommands.
+		{"bare subcommand name not in set", set("-it"), "exec", false},
+		{"bare subcommand name in set (still exact only)", set("exec"), "exec", true},
+
+		// Edge cases.
+		{"empty spec", set("-r"), "", false},
+		{"bare dash spec never matches (dash never in flagSet)", set("-r", "-f"), "-", false},
+		{"two-char non-dash", set("ab"), "ab", true}, // exact match passes
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := flagMatches(tc.flagSet, tc.spec)
+			if got != tc.want {
+				t.Errorf("flagMatches(%v, %q) = %v, want %v", tc.flagSet, tc.spec, got, tc.want)
+			}
+		})
 	}
 }

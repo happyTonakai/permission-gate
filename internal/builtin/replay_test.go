@@ -82,6 +82,13 @@ func TestReplayLog(t *testing.T) {
 		`echo $(echo $(rm -rf /))`,
 		`find . -name "*.go" -delete`,
 		`find . -type f -name "*.tmp"`,
+		// Regression: -print / -printf must stay allow (output-only flags).
+		`find . -name "*.go" -print`,
+		`find . -name "*.go" -printf "%p\n"`,
+		// Regression: multi-predicate find using -o (OR) and -prune must
+		// not be misflagged by the deny spec -ok (which IsShortBundle
+		// would expand to "-o -k" and falsely match the -o flag).
+		`find . -path ./skip -prune -o -path ./also-skip -prune -o -type f -name "*.go" -print`,
 		`for f in *.txt; do cat $f; done`,
 		`if test -f foo; then echo exists; else echo not; fi`,
 		`(ls -la | grep foo) && echo done`,
@@ -121,6 +128,58 @@ func TestReplayLog(t *testing.T) {
 
 	for _, r := range results {
 		fmt.Printf("  %s  %-60s  %s\n", r[0], r[1], r[2])
+	}
+}
+
+// TestFindFlagDenial guards two regressions in built-in find flag-deny
+// rules:
+//
+//  1. Output-only flags (-print, -printf) must NOT trigger deny. They
+//     cannot execute commands or delete files; -print is literally
+//     find's default action.
+//
+//  2. A multi-predicate find using -o (OR) and -prune must NOT be
+//     misflagged by the deny spec -ok. The deny spec "-ok" used to be
+//     expanded as the short-option bundle "-o -k" and falsely match the
+//     -o operator that appears in nearly every non-trivial find
+//     expression. flagMatches now requires ALL bundled letters to be
+//     present in the command's flag set, so "-ok" no longer matches a
+//     command that only has "-o" (no "-k").
+func TestFindFlagDenial(t *testing.T) {
+	engine, err := rules.New(&config.Config{}, config.MergePrepend, Allow(), Deny(), Ask(), DenyFlags())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	allow := []string{
+		`find . -name "*.go" -print`,
+		`find . -name "*.go" -printf "%p\n"`,
+		`find . -path ./skip -prune -o -path ./also -prune -o -type f -name "*.go" -print`,
+		// Garden-path: -o with no -k. Catches the regression where the
+		// deny spec "-ok" was being expanded as the bundle "-o -k" and
+		// matching any find expression using the -o (OR) operator.
+		// find has no -k flag in practice, but the test stays valid
+		// regardless.
+		`find . -name "*.go" -o -name "*.java"`,
+		`find . -o -name "*.go" -print`,
+	}
+	for _, cmd := range allow {
+		if v := engine.Evaluate(cmd).Final.Level; v != verdict.LevelAllow {
+			t.Errorf("expected allow for %q, got %s (%s)", cmd, v, v)
+		}
+	}
+
+	deny := []string{
+		`find . -name "*.go" -delete`,
+		`find . -name "*.go" -exec rm {} \;`,
+		`find . -name "*.go" -execdir rm {} \;`,
+		`find . -name "*.go" -ok rm {} \;`,
+		`find . -name "*.go" -okdir rm {} \;`,
+	}
+	for _, cmd := range deny {
+		if v := engine.Evaluate(cmd).Final.Level; v != verdict.LevelDeny {
+			t.Errorf("expected deny for %q, got %s (%s)", cmd, v, v)
+		}
 	}
 }
 

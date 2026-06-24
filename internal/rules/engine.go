@@ -350,10 +350,31 @@ func allArgsUnder(args []string, prefixes []string) bool {
 	return true
 }
 
-// flagMatches reports whether f matches any flag present in flagSet.
-// Short option bundles on f are expanded so a spec entry of "-rf" matches
-// commands with -r, -f, -rf, -fr, etc. Longer entries (-exec, -name) are
-// treated as long options and only match verbatim.
+// flagMatches reports whether f matches some flag present in flagSet.
+//
+// Matching rules, in order:
+//
+//  1. Exact match wins outright. A spec entry "-rf" hits a command that
+//     has the literal token "-rf" in its flag set.
+//
+//  2. f must start with a single '-' and have length ≥ 2. Entries that
+//     do not (e.g. the bare subcommand name "exec") are rejected by
+//     the bundle path below and fall back to the exact-match check
+//     above; if they're not in the flag set literally, they don't
+//     match. This is why the built-in docker deny flag "exec" was dead
+//     code: a subcommand is never in a command's flag set, so no
+//     "exec" entry could ever trigger a deny via this path.
+//
+//  3. Entries starting with "--" are long options and only match
+//     verbatim (no bundle expansion).
+//
+//  4. Short-option bundles (e.g. "-rf", "-it") are expanded and require
+//     ALL bundled letters to be present in the command's flag set.
+//     Earlier "any letter matches" semantics caused false positives like
+//     deny spec "-ok" matching any find expression that uses the very
+//     common -o (OR) operator. The "all letters present" semantic also
+//     matches the user intent of a bundle: "the command uses these
+//     flags together".
 func flagMatches(flagSet map[string]struct{}, f string) bool {
 	if f == "" {
 		return false
@@ -368,11 +389,11 @@ func flagMatches(flagSet map[string]struct{}, f string) bool {
 		return false
 	}
 	for i := 1; i < len(f); i++ {
-		if _, hit := flagSet["-"+string(f[i])]; hit {
-			return true
+		if _, hit := flagSet["-"+string(f[i])]; !hit {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 // pathUnderOrEqual reports whether path equals prefix or sits beneath it.
