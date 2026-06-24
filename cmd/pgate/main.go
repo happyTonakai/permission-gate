@@ -16,6 +16,8 @@ import (
 	"github.com/happyTonakai/permission-gate/internal/verdict"
 )
 
+var version = "dev" // overridden by -ldflags at build time
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -30,7 +32,7 @@ func main() {
 	case "hook":
 		runHook(os.Args[2:])
 	case "version":
-		fmt.Println("permission-gate v0.1.0")
+		fmt.Println("permission-gate " + version)
 	default:
 		printUsage()
 		os.Exit(1)

@@ -1,0 +1,145 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Explicit version (e.g. v1.1.1). Overrides auto-bump."
+        required: false
+        type: string
+        default: ""
+      bump:
+        description: "Auto version bump (used only when 'version' is empty)"
+        required: true
+        type: choice
+        default: "patch"
+        options:
+          - patch
+          - minor
+          - major
+      release_notes:
+        description: "Release notes (markdown). Leave empty for auto-generated from commits"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.compute.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute next version
+        id: compute
+        run: |
+          CUSTOM="${{ inputs.version }}"
+          if [ -n "$CUSTOM" ]; then
+            echo "Using explicit version: $CUSTOM"
+            echo "tag=$CUSTOM" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --tags
+          LATEST=$(git tag -l 'v[0-9]*' --sort=-v:refname | head -1)
+          if [ -z "$LATEST" ]; then
+            NEXT="v1.0.0"
+          else
+            MAJOR=$(echo "$LATEST" | sed 's/v//;s/\..*//')
+            MINOR=$(echo "$LATEST" | sed 's/v[0-9]*\.//;s/\..*//')
+            PATCH=$(echo "$LATEST" | sed 's/v[0-9]*\.[0-9]*\.//')
+            case "${{ inputs.bump }}" in
+              major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+              minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+              patch) PATCH=$((PATCH + 1)) ;;
+            esac
+            NEXT="v${MAJOR}.${MINOR}.${PATCH}"
+          fi
+          echo "tag=$NEXT" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    strategy:
+      matrix:
+        include:
+          - { os: macos-latest, goos: darwin, goarch: arm64 }
+          - { os: ubuntu-latest, goos: linux, goarch: amd64 }
+          - { os: ubuntu-latest, goos: linux, goarch: arm64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Build
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.tag }}
+        run: |
+          LDFLAGS="-s -w -X main.version=${VERSION}"
+          NAME="pgate_${{ matrix.goos }}_${{ matrix.goarch }}"
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+            go build -ldflags="$LDFLAGS" -o "dist/${NAME}" ./cmd/pgate
+
+      - name: Codesign (macOS)
+        if: matrix.goos == 'darwin'
+        shell: bash
+        run: codesign --force --deep --sign "-" "dist/pgate_${{ matrix.goos }}_${{ matrix.goarch }}"
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgate_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: dist/
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pgate_*
+          path: dist/
+          merge-multiple: true
+
+      - name: Create tag
+        run: |
+          git tag "${{ needs.version.outputs.tag }}"
+          git push origin "${{ needs.version.outputs.tag }}"
+
+      - name: Write custom release notes
+        if: ${{ inputs.release_notes != '' }}
+        shell: bash
+        env:
+          NOTES: ${{ inputs.release_notes }}
+        run: printf '%s\n' "$NOTES" > /tmp/release_body.md
+
+      - name: Create release (custom notes)
+        if: ${{ inputs.release_notes != '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: ${{ needs.version.outputs.tag }}
+          body_path: /tmp/release_body.md
+          files: dist/*
+
+      - name: Create release (auto-generated notes)
+        if: ${{ inputs.release_notes == '' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: ${{ needs.version.outputs.tag }}
+          generate_release_notes: true
+          files: dist/*
