@@ -401,3 +401,126 @@ func TestMatch(t *testing.T) {
 		}
 	}
 }
+
+func TestNonFlagArgs(t *testing.T) {
+	tests := []struct {
+		name   string
+		tokens []string
+		want   []string
+	}{
+		{"only flags", []string{"ls", "-la"}, nil}, // -la is a flag (bundle)
+		{"rm with args", []string{"rm", "-rf", "/tmp/foo", "/var/log"}, []string{"/tmp/foo", "/var/log"}},
+		{"long flag with value", []string{"grep", "--label=foo", "pattern", "file"}, []string{"pattern", "file"}},
+		{"dashdash stops flag scan", []string{"rm", "--", "-rf", "/tmp/foo", "/etc"}, []string{"-rf", "/tmp/foo", "/etc"}},
+		{"flag with attached value", []string{"rm", "-i.bak", "/tmp/x"}, []string{"/tmp/x"}},
+		{"no tokens", []string{"ls"}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := ExtractedCommand{Tokens: tt.tokens}
+			got := cmd.NonFlagArgs()
+			if !stringSliceEq(got, tt.want) {
+				t.Errorf("NonFlagArgs(%v) = %v, want %v", tt.tokens, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExpandedFlagSet(t *testing.T) {
+	tests := []struct {
+		name   string
+		tokens []string
+		want   []string
+	}{
+		{"rm -rf", []string{"rm", "-rf"}, []string{"-r", "-f"}},
+		{"rm separate", []string{"rm", "-r", "-f"}, []string{"-r", "-f"}},
+		{"rm -fr -i", []string{"rm", "-fr", "-i"}, []string{"-f", "-r", "-i"}},
+		{"long with value", []string{"grep", "--label=foo"}, []string{"--label"}},
+		{"long bare", []string{"git", "--no-pager"}, []string{"--no-pager"}},
+		{"gnu long with single dash", []string{"find", ".", "-name", "x"}, []string{"-name"}},
+		{"attached value treated as long", []string{"rm", "-i.bak"}, []string{"-i.bak"}},
+		{"dashdash stops", []string{"rm", "--", "-rf", "/tmp/x"}, nil},
+		{"no flags", []string{"ls", "/tmp"}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := ExtractedCommand{Tokens: tt.tokens}
+			got := cmd.ExpandedFlagSet()
+			if !stringSetEq(got, tt.want) {
+				t.Errorf("ExpandedFlagSet(%v) = %v, want %v", tt.tokens, setKeys(got), tt.want)
+			}
+		})
+	}
+}
+
+func stringSliceEq(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func stringSetEq(got map[string]struct{}, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for _, w := range want {
+		if _, ok := got[w]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func setKeys(m map[string]struct{}) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+func TestIsShortBundle(t *testing.T) {
+	tests := []struct {
+		tok  string
+		want bool
+	}{
+		// 3–4 lowercase letters → bundle.
+		{"-rf", true},
+		{"-fr", true},
+		{"-rfi", true},
+		{"-rv", true},
+		// 5+ letters → GNU long, not a bundle.
+		{"-name", false},
+		{"-exec", false},
+		{"-delete", false},
+		{"-rfivx", false},
+		// Length ≤ 2 → not handled by this helper; caller treats it as a
+		// single short flag.
+		{"-r", false},
+		{"-x", false},
+		// Digits → not a bundle (no caller's "stop at non-letter" hack).
+		{"-r2", false},
+		{"-123", false},
+		// Mixed case → not a bundle.
+		{"-rF", false},
+		{"-Rf", false},
+		{"-NAME", false},
+		// Empty / not a flag at all.
+		{"", false},
+		{"--", false},
+		{"foo", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.tok, func(t *testing.T) {
+			if got := IsShortBundle(tt.tok); got != tt.want {
+				t.Errorf("IsShortBundle(%q) = %v, want %v", tt.tok, got, tt.want)
+			}
+		})
+	}
+}

@@ -56,7 +56,11 @@ func main() {
 	fmt.Printf("Total entries: %d, unique commands: %d\n\n", len(entries), len(unique))
 
 	cfg := &config.Config{}
-	engine := rules.New(cfg, builtin.Allow(), builtin.Deny(), builtin.Ask(), builtin.DenyFlags())
+	engine, err := rules.New(cfg, config.MergePrepend, builtin.Allow(), builtin.Deny(), builtin.Ask(), builtin.DenyFlags())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 
 	agree := 0
 	disagree := 0

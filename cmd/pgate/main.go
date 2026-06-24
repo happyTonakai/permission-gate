@@ -88,13 +88,17 @@ func runCheck(args []string) {
 	}
 
 	cwd, _ := os.Getwd()
-	cfg, _, err := config.ResolveConfig(cwd)
+	cfg, mode, err := config.ResolveConfig(cwd)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
 	}
 
-	engine := rules.New(cfg, builtin.Allow(), builtin.Deny(), builtin.Ask(), builtin.DenyFlags())
+	engine, err := rules.New(cfg, mode, builtin.Allow(), builtin.Deny(), builtin.Ask(), builtin.DenyFlags())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error building rule engine: %v\n", err)
+		os.Exit(1)
+	}
 	result := engine.Evaluate(cmd)
 
 	if *jsonOutput {
@@ -238,12 +242,16 @@ func handleClaudeRequest() {
 	}
 
 	cwd, _ := os.Getwd()
-	cfg, _, err := config.ResolveConfig(cwd)
+	cfg, mode, err := config.ResolveConfig(cwd)
 	if err != nil {
 		os.Exit(0)
 	}
 
-	engine := rules.New(cfg, builtin.Allow(), builtin.Deny(), builtin.Ask(), builtin.DenyFlags())
+	engine, err := rules.New(cfg, mode, builtin.Allow(), builtin.Deny(), builtin.Ask(), builtin.DenyFlags())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(0)
+	}
 	result := engine.Evaluate(req.ToolInput.Command)
 
 	behavior := verdictLevelToClaude(result.Final.Level)

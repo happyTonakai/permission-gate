@@ -310,3 +310,95 @@ func (c ExtractedCommand) Match(pattern []string) bool {
 	}
 	return c.IsPrefixMatch(pattern)
 }
+
+// NonFlagArgs returns all non-flag tokens in the command. The POSIX end-of-
+// options marker `--` ends flag scanning: every token after it is treated as
+// a positional argument, even if it starts with a dash.
+func (c ExtractedCommand) NonFlagArgs() []string {
+	var out []string
+	afterDashDash := false
+	for _, tok := range c.Tokens[1:] {
+		if tok == "--" {
+			afterDashDash = true
+			continue
+		}
+		if !afterDashDash && looksLikeFlag(tok) {
+			continue
+		}
+		out = append(out, tok)
+	}
+	return out
+}
+
+// ExpandedFlagSet returns the set of flags present in the command. Short
+// option bundles of ≤4 lowercase letters (-rf, -fr, -rfi, -rv) are
+// expanded into individual flags. Anything longer with a single dash is
+// treated as a GNU long option (-name, -exec) and stored verbatim so it
+// can be matched against spec entries like IncludeFlags = ["-exec"].
+// True POSIX long options (--name, --name=value) are stored as-is. Anything
+// after `--` is ignored.
+func (c ExtractedCommand) ExpandedFlagSet() map[string]struct{} {
+	out := make(map[string]struct{})
+	afterDashDash := false
+	for _, tok := range c.Tokens[1:] {
+		if tok == "--" {
+			afterDashDash = true
+			continue
+		}
+		if afterDashDash {
+			continue
+		}
+		if !looksLikeFlag(tok) {
+			continue
+		}
+		if strings.HasPrefix(tok, "--") {
+			name := tok
+			if i := strings.IndexByte(tok, '='); i >= 0 {
+				name = tok[:i]
+			}
+			out[name] = struct{}{}
+			continue
+		}
+		// Single-dash token: short flag (-x) or short bundle (-rf) or GNU
+		// long (-name). Decide by length and composition.
+		if len(tok) == 2 {
+			out[tok] = struct{}{}
+			continue
+		}
+		if IsShortBundle(tok) {
+			for i := 1; i < len(tok); i++ {
+				out["-"+string(tok[i])] = struct{}{}
+			}
+			continue
+		}
+		// GNU long option (or attached value): store verbatim.
+		name := tok
+		if i := strings.IndexByte(tok, '='); i >= 0 {
+			name = tok[:i]
+		}
+		out[name] = struct{}{}
+	}
+	return out
+}
+
+// IsShortBundle reports whether tok is a POSIX short-option bundle: a
+// leading "-" followed by 2–3 lowercase letters (total length 3–4), e.g.
+// -rf, -fr, -rfi, -rv. Anything longer or with uppercase / digits is
+// treated as a GNU long option instead. Exported so the rule engine can
+// apply the same heuristic when expanding spec-side flags.
+func IsShortBundle(tok string) bool {
+	if len(tok) < 3 || len(tok) > 4 || tok[0] != '-' {
+		return false
+	}
+	for i := 1; i < len(tok); i++ {
+		c := tok[i]
+		if c < 'a' || c > 'z' {
+			return false
+		}
+	}
+	return true
+}
+
+func looksLikeFlag(tok string) bool {
+	return len(tok) >= 2 && tok[0] == '-' && tok != "-"
+}

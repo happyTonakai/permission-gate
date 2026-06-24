@@ -13,7 +13,10 @@ import (
 // Replay commands from real Pi agent permission-gate log
 // and show how our pgate would classify them.
 func TestReplayLog(t *testing.T) {
-	engine := rules.New(&config.Config{}, Allow(), Deny(), Ask(), DenyFlags())
+	engine, err := rules.New(&config.Config{}, config.MergePrepend, Allow(), Deny(), Ask(), DenyFlags())
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	commands := []string{
 		// === Allow in original log ===
