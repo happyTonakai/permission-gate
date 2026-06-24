@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -270,6 +271,155 @@ func TestMergeAppend(t *testing.T) {
 	if merged[0].Cmd != "ls" {
 		t.Errorf("expected global 'ls' first (append mode), got %s", merged[0].Cmd)
 	}
+}
+
+// TestResolveConfigMergeModeFallback verifies the merge_mode resolution
+// chain. Earlier code read merge_mode from the project config only and
+// silently ignored the global setting. The fix lets the global value
+// take effect when the project config doesn't set one (or doesn't exist).
+//
+// Resolution order (first non-empty wins):
+//   1. project.merge_mode    (set in .permission-gate.toml)
+//   2. global.merge_mode     (set in ~/.config/permission-gate/config.toml)
+//   3. MergePrepend          (default)
+func TestResolveConfigMergeModeFallback(t *testing.T) {
+	// Use temp HOME for global config and a temp dir as cwd for project.
+	tmp := t.TempDir()
+	cwd := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(cwd, 0755); err != nil {
+		t.Fatal(err)
+	}
+	globalPath := filepath.Join(tmp, "config.toml")
+	projectPath := filepath.Join(cwd, ".permission-gate.toml")
+
+	withEnv := func(k, v string) func() {
+		old := os.Getenv(k)
+		os.Setenv(k, v)
+		return func() { os.Setenv(k, old) }
+	}
+	withGlobal := func(content string) func() {
+		os.WriteFile(globalPath, []byte(content), 0644)
+		return withEnv("PERMISSION_GATE_CONFIG", globalPath)
+	}
+	withProject := func(content string) {
+		if content == "" {
+			os.Remove(projectPath)
+		} else {
+			os.WriteFile(projectPath, []byte(content), 0644)
+		}
+	}
+	restore := withEnv("PERMISSION_GATE_PROJECT_CONFIG", "") // force load via cwd
+	defer restore()
+
+	cases := []struct {
+		name    string
+		global  string
+		project string
+		want    MergeMode
+	}{
+		{"neither set → prepend", "", "", MergePrepend},
+		{"only global set → global wins", `merge_mode = "overwrite"`, "", MergeOverwrite},
+		{"only project set → project wins", "", `merge_mode = "append"`, MergeAppend},
+		{"both set, project wins", `merge_mode = "overwrite"`, `merge_mode = "append"`, MergeAppend},
+		{"global set, project exists but no merge_mode → global inherits", `merge_mode = "overwrite"`, "[deny]\ncommands = [\"x\"]", MergeOverwrite},
+		{"global no merge_mode, project set → project wins", "[deny]\ncommands = [\"x\"]", `merge_mode = "append"`, MergeAppend},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			restoreGlobal := withGlobal(tc.global)
+			defer restoreGlobal()
+			withProject(tc.project)
+
+			_, mode, err := ResolveConfig(cwd)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode != tc.want {
+				t.Errorf("mode = %q, want %q", mode, tc.want)
+			}
+		})
+	}
+}
+
+// TestResolveConfigErrorPaths covers the failure modes ResolveConfig can
+// surface. Errors should be specific enough that the user can tell which
+// config (global vs project) and which field is wrong, instead of getting
+// a generic "config invalid" message.
+func TestResolveConfigErrorPaths(t *testing.T) {
+	tmp := t.TempDir()
+	cwd := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(cwd, 0755); err != nil {
+		t.Fatal(err)
+	}
+	globalPath := filepath.Join(tmp, "config.toml")
+	projectPath := filepath.Join(cwd, ".permission-gate.toml")
+
+	withGlobal := func(content string) {
+		os.WriteFile(globalPath, []byte(content), 0644)
+		os.Setenv("PERMISSION_GATE_CONFIG", globalPath)
+		os.Setenv("PERMISSION_GATE_PROJECT_CONFIG", "")
+	}
+	withProject := func(content string) {
+		if content == "" {
+			os.Remove(projectPath)
+		} else {
+			os.WriteFile(projectPath, []byte(content), 0644)
+		}
+	}
+	withGlobal("")
+	defer func() {
+		os.Unsetenv("PERMISSION_GATE_CONFIG")
+		os.Unsetenv("PERMISSION_GATE_PROJECT_CONFIG")
+	}()
+
+	t.Run("global TOML syntax error", func(t *testing.T) {
+		withGlobal(`[deny` + "\nunterminated") // missing closing bracket
+		withProject("")
+		_, _, err := ResolveConfig(cwd)
+		if err == nil {
+			t.Fatal("expected error for malformed global TOML")
+		}
+		if !strings.Contains(err.Error(), "global config") {
+			t.Errorf("error should mention global config: %v", err)
+		}
+	})
+
+	t.Run("global inline table missing cmd field", func(t *testing.T) {
+		withGlobal("[deny]\ncommands = [{ exclude_flags = [\"-x\"] }]")
+		withProject("")
+		_, _, err := ResolveConfig(cwd)
+		if err == nil {
+			t.Fatal("expected error for inline table without cmd")
+		}
+		if !strings.Contains(err.Error(), "global") {
+			t.Errorf("error should mention global: %v", err)
+		}
+	})
+
+	t.Run("project inline table wrong type", func(t *testing.T) {
+		withGlobal("")
+		withProject("[allow]\ncommands = [{ cmd = 42 }]") // cmd should be string
+		_, _, err := ResolveConfig(cwd)
+		if err == nil {
+			t.Fatal("expected error for wrong cmd type")
+		}
+		if !strings.Contains(err.Error(), "project") {
+			t.Errorf("error should mention project: %v", err)
+		}
+	})
+
+	t.Run("neither file present still succeeds", func(t *testing.T) {
+		withGlobal("")
+		withProject("")
+		_, mode, err := ResolveConfig(cwd)
+		if err != nil {
+			t.Fatalf("absent files should not error: %v", err)
+		}
+		if mode != MergePrepend {
+			t.Errorf("mode = %q, want %q (default)", mode, MergePrepend)
+		}
+	})
 }
 
 // mergeRawForTest is a test-only helper: parse raw rules, then merge specs

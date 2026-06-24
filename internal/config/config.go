@@ -164,12 +164,30 @@ type ProjectOverride struct {
 
 // ResolveConfig loads and merges global config + project override.
 // Returns a resolved Config and the effective merge mode used.
+//
+// Merge-mode resolution (first non-empty wins):
+//   1. project.merge_mode    — set in .permission-gate.toml
+//   2. global.merge_mode     — set in ~/.config/permission-gate/config.toml
+//   3. MergePrepend          — default
+//
+// Earlier versions of this function read merge_mode from the project config
+// only, which meant the global setting was silently ignored. Now the project
+// is treated as a partial override: if it doesn't explicitly set merge_mode,
+// the value inherits from global (or defaults to prepend).
 func ResolveConfig(cwd string) (*Config, MergeMode, error) {
 	global, err := loadFile(globalConfigPath())
 	if err != nil {
 		return nil, "", fmt.Errorf("global config: %w", err)
 	}
-	project, mode := loadProjectConfig(cwd)
+	project, projectMode := loadProjectConfig(cwd)
+
+	mode := projectMode
+	if mode == "" {
+		mode = global.MergeMode
+	}
+	if mode == "" {
+		mode = MergePrepend
+	}
 
 	gAllow, err := global.Allow.Specs()
 	if err != nil {
@@ -293,13 +311,14 @@ func loadFile(path string) (*RawConfig, error) {
 	return &cfg, nil
 }
 
+// loadProjectConfig reads the project-level config (if any) and returns
+// the raw config plus whatever merge_mode it explicitly set. An empty
+// MergeMode means "no opinion" — the caller is expected to fall back to
+// the global setting (or the default).
 func loadProjectConfig(cwd string) (RawConfig, MergeMode) {
 	cfg, err := loadFile(projectConfigPath(cwd))
 	if err != nil || cfg == nil {
-		return RawConfig{}, MergePrepend
-	}
-	if cfg.MergeMode == "" {
-		cfg.MergeMode = MergePrepend
+		return RawConfig{}, ""
 	}
 	return *cfg, cfg.MergeMode
 }
