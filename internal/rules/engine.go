@@ -149,10 +149,15 @@ func stringsToPatterns(rules []string, source string, tier verdict.Level) []patt
 
 // flagsToDenyPatterns converts a cmd → flags map into a list of virtual
 // deny specs, one per command, that match only when the dangerous flag
-// is present.
+// is present. Commands with an empty flag list are skipped — otherwise the
+// spec would match every invocation of that command (no IncludeFlags means
+// "no constraint", not "match all").
 func flagsToDenyPatterns(flags map[string][]string, source string) []pattern {
 	out := make([]pattern, 0, len(flags))
 	for cmd, flagList := range flags {
+		if len(flagList) == 0 {
+			continue
+		}
 		flagCopy := append([]string(nil), flagList...)
 		out = append(out, pattern{
 			spec: config.CommandSpec{

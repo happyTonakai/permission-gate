@@ -113,6 +113,27 @@ func TestFindWithoutDangerousFlags(t *testing.T) {
 	}
 }
 
+// TestEmptyDenyFlagListDoesNotDenyCommand guards against a regression where
+// a builtin deny-flag entry with an empty flag list (e.g. "git": {}) was
+// converted into a virtual deny spec that matched every invocation of the
+// command — because empty IncludeFlags means "no constraint", not "match
+// all". Commands with an empty deny-flag list must be left untouched.
+func TestEmptyDenyFlagListDoesNotDenyCommand(t *testing.T) {
+	denyFlagsWithEmpty := map[string][]string{
+		"git":  {},        // empty list — must NOT deny plain `git status`
+		"find": {"-exec"}, // real list — must still deny
+	}
+	e := newEngine(t, &config.Config{}, config.MergePrepend, []string{"git", "ls", "find"}, nil, nil, denyFlagsWithEmpty)
+
+	assertAllowed(t, e, "git status")
+	assertAllowed(t, e, "git status -s")
+	assertAllowed(t, e, "git diff")
+	assertAllowed(t, e, "git commit -m hi")
+	assertAllowed(t, e, "ls -la")
+	assertDenied(t, e, "find . -exec rm {} \\;")
+	assertAllowed(t, e, "find . -name '*.go'")
+}
+
 // ─── Subcommand prefix matching ───────────────────────────────
 
 func TestGitLogAllowed(t *testing.T) {
