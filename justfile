@@ -14,6 +14,11 @@ install: build
     cp {{ binary }} {{ install_dir }}/
     @echo "Installed to {{ install_dir }}/{{ binary }}"
 
+install-all: install
+    {{ binary }} hook install pi
+    {{ binary }} hook install opencode
+    {{ binary }} hook install claude-code
+
 # Run tests
 test:
     go test ./...
