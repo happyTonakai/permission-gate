@@ -84,13 +84,13 @@ func DenyFlags() map[string][]string {
 		// prompts is irrelevant in an agent context where the LLM cannot
 		// answer find's interactive prompt anyway, so denying it costs
 		// nothing and closes the "use -ok to bypass -exec deny" path.
-		"find":  {"-exec", "-execdir", "-delete", "-ok", "-okdir"},
-		"sed":   {"-i", "--in-place"},
-		"tar":   {"--to-command", "-I", "--use-compress-program", "--checkpoint-action"},
-		"curl":  {"--output", "-o", "--remote-name", "-O", "--upload-file", "-T"},
-		"wget":  {"-O", "--output-document", "-o", "--output-file"},
-		"dd":    {"if=", "of="},
-		"git":    {},
+		"find": {"-exec", "-execdir", "-delete", "-ok", "-okdir"},
+		"sed":  {"-i", "--in-place"},
+		"tar":  {"--to-command", "-I", "--use-compress-program", "--checkpoint-action"},
+		"curl": {"--output", "-o", "--remote-name", "-O", "--upload-file", "-T"},
+		"wget": {"-O", "--output-document", "-o", "--output-file"},
+		"dd":   {"if=", "of="},
+		"git":  {},
 		// docker deny flags: only flag-level vectors. Subcommand-level
 		// deny (e.g. "docker exec" running arbitrary commands inside a
 		// container) lives in dockerDestructive() as a whole-command rule,
@@ -98,10 +98,10 @@ func DenyFlags() map[string][]string {
 		// earlier "exec" entry here was dead code: flagMatches rejects any
 		// spec entry that does not start with '-'.
 		"docker": {"-it", "--interactive", "--tty"},
-		"kill":  {"-9", "--signal"},
+		"kill":   {"-9", "--signal"},
 		"python": {"-c"},
 		"chmod":  {"-R", "--recursive"},
-		"chown": {"-R", "--recursive"},
+		"chown":  {"-R", "--recursive"},
 	}
 }
 
@@ -148,8 +148,8 @@ func fileNav() []string {
 		"fd", "fdfind",
 		"walk",
 		"mkdir", "touch",
-		}
 	}
+}
 
 // ─── Search & filtering ───────────────────────────────────────
 

@@ -166,9 +166,9 @@ type ProjectOverride struct {
 // Returns a resolved Config and the effective merge mode used.
 //
 // Merge-mode resolution (first non-empty wins):
-//   1. project.merge_mode    — set in .permission-gate.toml
-//   2. global.merge_mode     — set in ~/.config/permission-gate/config.toml
-//   3. MergePrepend          — default
+//  1. project.merge_mode    — set in .permission-gate.toml
+//  2. global.merge_mode     — set in ~/.config/permission-gate/config.toml
+//  3. MergePrepend          — default
 //
 // Earlier versions of this function read merge_mode from the project config
 // only, which meant the global setting was silently ignored. Now the project
@@ -254,6 +254,7 @@ func mergeSpecs(primary, secondary []CommandSpec) []CommandSpec {
 //   - prepend:  project before global (user-first)
 //   - append:   global before project (builtin-first)
 //   - overwrite: project only
+//
 // The primary map's flags are appended after the secondary map's flags;
 // both lists are preserved because the engine evaluates them as a set.
 func mergeFlags(mode MergeMode, project, global map[string][]string) map[string][]string {

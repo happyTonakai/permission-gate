@@ -279,9 +279,9 @@ func TestMergeAppend(t *testing.T) {
 // take effect when the project config doesn't set one (or doesn't exist).
 //
 // Resolution order (first non-empty wins):
-//   1. project.merge_mode    (set in .permission-gate.toml)
-//   2. global.merge_mode     (set in ~/.config/permission-gate/config.toml)
-//   3. MergePrepend          (default)
+//  1. project.merge_mode    (set in .permission-gate.toml)
+//  2. global.merge_mode     (set in ~/.config/permission-gate/config.toml)
+//  3. MergePrepend          (default)
 func TestResolveConfigMergeModeFallback(t *testing.T) {
 	// Use temp HOME for global config and a temp dir as cwd for project.
 	tmp := t.TempDir()

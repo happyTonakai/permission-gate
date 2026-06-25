@@ -42,65 +42,79 @@ func walkCmd(stmt *syntax.Stmt, commands *[]ExtractedCommand) {
 
 	switch n := stmt.Cmd.(type) {
 	case *syntax.CallExpr:
-		// Extract this command invocation
-		if cmd := extractCallExpr(n); cmd != nil {
-			*commands = append(*commands, *cmd)
-		}
-		// Also check all word parts for command substitutions
-		for _, arg := range n.Args {
-			walkWordParts(arg.Parts, commands)
-		}
-		for _, assign := range n.Assigns {
-			if assign.Value != nil {
-				walkWordParts(assign.Value.Parts, commands)
-			}
-		}
-
+		handleCallExpr(n, commands)
 	case *syntax.BinaryCmd:
 		// &&, ||, | — check both sides
 		walkCmd(n.X, commands)
 		walkCmd(n.Y, commands)
-
 	case *syntax.Subshell:
 		walkStmts(n.Stmts, commands)
-
 	case *syntax.Block:
 		walkStmts(n.Stmts, commands)
-
 	case *syntax.IfClause:
-		walkStmts(n.Cond, commands)
-		walkStmts(n.Then, commands)
-		if n.Else != nil {
-			walkCmd(&syntax.Stmt{Cmd: n.Else}, commands)
-		}
-
+		handleIfClause(n, commands)
 	case *syntax.ForClause:
-		if n.Loop != nil {
-			walkLoop(n.Loop, commands)
-		}
-		walkStmts(n.Do, commands)
-
+		handleForClause(n, commands)
 	case *syntax.WhileClause:
 		walkStmts(n.Cond, commands)
 		walkStmts(n.Do, commands)
-
 	case *syntax.CaseClause:
-		for _, item := range n.Items {
-			walkStmts(item.Stmts, commands)
-		}
-
+		handleCaseClause(n, commands)
 	case *syntax.FuncDecl:
 		walkCmd(n.Body, commands)
-
 	case *syntax.ArithmCmd:
 		walkArithmExpr(n.X, commands)
-
 	case *syntax.TestClause:
 		walkTestExpr(n.X, commands)
 	}
 
-	// Check redirects for heredocs with command substitutions
-	for _, redir := range stmt.Redirs {
+	walkRedirs(stmt.Redirs, commands)
+}
+
+// handleCallExpr extracts the command itself and walks every word part
+// (in args and assignments) for nested command substitutions.
+func handleCallExpr(n *syntax.CallExpr, commands *[]ExtractedCommand) {
+	if cmd := extractCallExpr(n); cmd != nil {
+		*commands = append(*commands, *cmd)
+	}
+	for _, arg := range n.Args {
+		walkWordParts(arg.Parts, commands)
+	}
+	for _, assign := range n.Assigns {
+		if assign.Value != nil {
+			walkWordParts(assign.Value.Parts, commands)
+		}
+	}
+}
+
+// handleIfClause walks the cond/then arms and, if present, the else arm.
+func handleIfClause(n *syntax.IfClause, commands *[]ExtractedCommand) {
+	walkStmts(n.Cond, commands)
+	walkStmts(n.Then, commands)
+	if n.Else != nil {
+		walkCmd(&syntax.Stmt{Cmd: n.Else}, commands)
+	}
+}
+
+// handleForClause walks the loop header (if any) and the body statements.
+func handleForClause(n *syntax.ForClause, commands *[]ExtractedCommand) {
+	if n.Loop != nil {
+		walkLoop(n.Loop, commands)
+	}
+	walkStmts(n.Do, commands)
+}
+
+// handleCaseClause walks the statement list of every match arm.
+func handleCaseClause(n *syntax.CaseClause, commands *[]ExtractedCommand) {
+	for _, item := range n.Items {
+		walkStmts(item.Stmts, commands)
+	}
+}
+
+// walkRedirs inspects every redirect's word parts (including heredoc
+// bodies) for command substitutions.
+func walkRedirs(redirs []*syntax.Redirect, commands *[]ExtractedCommand) {
+	for _, redir := range redirs {
 		if redir.Hdoc != nil {
 			walkWordParts(redir.Hdoc.Parts, commands)
 		}

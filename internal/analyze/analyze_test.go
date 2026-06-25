@@ -363,7 +363,7 @@ func TestPathPrefixMatch(t *testing.T) {
 		{[]string{"~/bin/ls", "-la"}, []string{"ls"}, true},
 		{[]string{"/usr/bin/git", "log"}, []string{"git", "log"}, true},
 		{[]string{"/usr/bin/git", "push"}, []string{"git", "log"}, false},
-		{[]string{"ls"}, []string{"ls"}, true},           // bare command, no path
+		{[]string{"ls"}, []string{"ls"}, true}, // bare command, no path
 	}
 
 	for _, tt := range tests {

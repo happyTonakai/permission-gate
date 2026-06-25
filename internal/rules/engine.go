@@ -256,7 +256,7 @@ func (e *Engine) Evaluate(rawCmd string) *verdict.Result {
 	case len(askedCmds) == 0:
 		result.Final = verdict.Allow("all commands are allowed", "")
 	default:
-		result.Final = verdict.Ask("needs confirmation: "+strings.Join(askedCmds, ", "))
+		result.Final = verdict.Ask("needs confirmation: " + strings.Join(askedCmds, ", "))
 	}
 
 	return result

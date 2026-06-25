@@ -51,7 +51,7 @@ func (v Verdict) String() string {
 
 // SegmentResult holds the verdict for one command segment in a pipeline/chain.
 type SegmentResult struct {
-	Command string  `json:"command"`  // canonical form of the command
+	Command string   `json:"command"` // canonical form of the command
 	Tokens  []string `json:"tokens"`  // tokenized command
 	Verdict Verdict  `json:"verdict"`
 }
