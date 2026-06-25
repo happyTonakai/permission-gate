@@ -3,6 +3,8 @@
 [![CI](https://github.com/happyTonakai/permission-gate/actions/workflows/ci.yml/badge.svg)](https://github.com/happyTonakai/permission-gate/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/happyTonakai/permission-gate)](https://github.com/happyTonakai/permission-gate/releases)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/happyTonakai/permission-gate)](https://go.dev/)
+[![Go Report Card](https://goreportcard.com/badge/github.com/happyTonakai/permission-gate)](https://goreportcard.com/report/github.com/happyTonakai/permission-gate)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](https://github.com/happyTonakai/permission-gate)
 [![License](https://img.shields.io/github/license/happyTonakai/permission-gate)](LICENSE)
 
 > [English README](README.md) · **中文**
