@@ -1,5 +1,12 @@
 # Permission Gate
 
+[![CI](https://github.com/happyTonakai/permission-gate/actions/workflows/ci.yml/badge.svg)](https://github.com/happyTonakai/permission-gate/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/happyTonakai/permission-gate)](https://github.com/happyTonakai/permission-gate/releases)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/happyTonakai/permission-gate)](https://go.dev/)
+[![License](https://img.shields.io/github/license/happyTonakai/permission-gate)](LICENSE)
+
+> **English** · [中文](README.zh.md)
+
 AST-based bash command permission gate. Parses shell commands into an AST, then evaluates each command segment against a three-tier allow / deny / ask rule engine.
 
 Built on [`mvdan.cc/sh/v3`](https://github.com/mvdan/sh) for shell syntax parsing.
