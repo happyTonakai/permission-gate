@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eu
+# pipefail is bash-only; silently skip when running under sh (dash)
+(set -o pipefail) 2>/dev/null && set -o pipefail
 
 REPO="happyTonakai/permission-gate"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
