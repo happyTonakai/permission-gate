@@ -35,29 +35,50 @@ This allows `find . -name '*.go'` but blocks `find . -exec rm {} \;`.
 
 ## Installation
 
-### Build and install the binary
+### Quick install (recommended)
 
-Pick one:
+One-liner — auto-detects your OS and architecture, downloads the latest binary from GitHub Releases:
 
 ```bash
-# Option A: install via just (builds, copies to ~/.local/bin/pgate)
-just install
+curl -sSfL https://raw.githubusercontent.com/happyTonakai/permission-gate/main/install.sh | sh
+```
 
-# Option B: build from source
+To install a specific version:
+
+```bash
+curl -sSfL https://raw.githubusercontent.com/happyTonakai/permission-gate/main/install.sh | VERSION=v1.0.0 sh
+```
+
+By default the binary goes to `~/.local/bin/pgate`. Override with `INSTALL_DIR`:
+
+```bash
+curl -sSfL https://raw.githubusercontent.com/happyTonakai/permission-gate/main/install.sh | INSTALL_DIR=/usr/local/bin sh
+```
+
+Verify:
+
+```bash
+pgate version
+# permission-gate v1.0.0
+```
+
+### Alternative: Build from source
+
+Requires Go 1.25+.
+
+```bash
 git clone https://github.com/happytonakai/permission-gate.git
 cd permission-gate
+
+# Option A: using just
+just install
+
+# Option B: manual build
 go build -o pgate ./cmd/pgate
 cp pgate ~/.local/bin/    # or anywhere on $PATH
 
 # Option C: go install
 go install github.com/happytonakai/permission-gate/cmd/pgate@latest
-```
-
-Verify `pgate` is on `PATH`:
-
-```bash
-pgate version
-# permission-gate v0.1.0
 ```
 
 ### Install the agent hook
