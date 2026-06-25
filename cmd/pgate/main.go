@@ -45,7 +45,7 @@ func printUsage() {
 Usage:
   pgate check [flags] <command>    Check a command against the rules
   pgate init                       Create default config file
-  pgate hook install <target>      Install hook (claude-code | opencode | pi)
+  pgate hook install <target>      Install hook (claude | opencode | pi)
   pgate hook uninstall <target>    Uninstall hook
   pgate version                    Show version
 
@@ -134,7 +134,7 @@ func runCheck(args []string) {
 func runHook(args []string) {
 	if len(args) == 0 {
 		fmt.Fprintf(os.Stderr, "Usage: pgate hook install|uninstall <target>\n")
-		fmt.Fprintf(os.Stderr, "Targets: claude-code, opencode, pi\n")
+		fmt.Fprintf(os.Stderr, "Targets: claude, opencode, pi\n")
 		os.Exit(1)
 	}
 
@@ -142,7 +142,7 @@ func runHook(args []string) {
 	case "install":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "Usage: pgate hook install <target>")
-			fmt.Fprintln(os.Stderr, "Targets: claude-code, opencode, pi")
+			fmt.Fprintln(os.Stderr, "Targets: claude, opencode, pi")
 			os.Exit(1)
 		}
 		if err := installHook(args[1]); err != nil {
@@ -154,7 +154,7 @@ func runHook(args []string) {
 	case "uninstall":
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "Usage: pgate hook uninstall <target>")
-			fmt.Fprintln(os.Stderr, "Targets: claude-code, opencode, pi")
+			fmt.Fprintln(os.Stderr, "Targets: claude, opencode, pi")
 			os.Exit(1)
 		}
 		if err := uninstallHook(args[1]); err != nil {

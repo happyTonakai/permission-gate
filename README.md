@@ -86,7 +86,7 @@ go install github.com/happytonakai/permission-gate/cmd/pgate@latest
 `pgate` ships hooks for three agents. Pick the one(s) you use:
 
 ```bash
-pgate hook install claude-code   # writes ~/.claude/hooks/permission-gate.sh + registers in ~/.claude/settings.json
+pgate hook install claude   # writes ~/.claude/hooks/permission-gate.sh + registers in ~/.claude/settings.json
 pgate hook install opencode      # writes ~/.config/opencode/plugins/permission-gate.ts
 pgate hook install pi            # writes ~/.pi/agent/extensions/permission-gate/index.ts
 ```
@@ -96,7 +96,7 @@ Each `install` is safe to re-run — it overwrites the existing hook / plugin / 
 Uninstall:
 
 ```bash
-pgate hook uninstall claude-code
+pgate hook uninstall claude
 pgate hook uninstall opencode
 pgate hook uninstall pi
 ```

@@ -15,33 +15,33 @@ func installHook(target string) error {
 	binary, _ = filepath.Abs(binary)
 
 	switch target {
-	case "claude-code":
-		return installClaudeCodeHook(binary)
+	case "claude":
+		return installClaudeHook(binary)
 	case "opencode":
 		return installOpenCodeHook(binary)
 	case "pi":
 		return installPiAgentHook(binary)
 	default:
-		return fmt.Errorf("unknown target: %s (supported: claude-code, opencode, pi)", target)
+		return fmt.Errorf("unknown target: %s (supported: claude, opencode, pi)", target)
 	}
 }
 
 func uninstallHook(target string) error {
 	switch target {
-	case "claude-code":
-		return removeClaudeCodeHook()
+	case "claude":
+		return removeClaudeHook()
 	case "opencode":
 		return removeOpenCodeHook()
 	case "pi":
 		return removePiAgentHook()
 	default:
-		return fmt.Errorf("unknown target: %s (supported: claude-code, opencode, pi)", target)
+		return fmt.Errorf("unknown target: %s (supported: claude, opencode, pi)", target)
 	}
 }
 
-// ─── Claude Code ────────────────────────────────────────────────
+// ─── Claude ──────────────────────────────────────────────────────
 //
-// Claude Code hook system: shell scripts registered in settings.json
+// Claude hook system: shell scripts registered in settings.json
 // under hooks.PermissionRequest. Each receives JSON on stdin:
 //
 //	{"tool_name":"Bash","tool_input":{"command":"..."},"cwd":"...","transcript_path":"..."}
@@ -59,7 +59,7 @@ func claudeHookDir() (string, error) {
 	return filepath.Join(home, ".claude", "hooks"), nil
 }
 
-func installClaudeCodeHook(binary string) error {
+func installClaudeHook(binary string) error {
 	hookDir, err := claudeHookDir()
 	if err != nil {
 		return err
@@ -71,7 +71,7 @@ func installClaudeCodeHook(binary string) error {
 	hookPath := filepath.Join(hookDir, "permission-gate.sh")
 	content := fmt.Sprintf(`#!/usr/bin/env bash
 # Permission Gate — Claude Code PermissionRequest hook
-# Installed by: pgate hook install claude-code
+# Installed by: pgate hook install claude
 exec %s hook claude-request
 `, binary)
 
@@ -186,7 +186,7 @@ func registerClaudeHook(hookPath string) error {
 	return nil
 }
 
-func removeClaudeCodeHook() error {
+func removeClaudeHook() error {
 	hookDir, err := claudeHookDir()
 	if err != nil {
 		return err
