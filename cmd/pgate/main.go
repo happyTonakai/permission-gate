@@ -31,6 +31,8 @@ func main() {
 		runInit()
 	case "hook":
 		runHook(os.Args[2:])
+	case "update":
+		runUpdate(os.Args[2:])
 	case "version":
 		fmt.Println("permission-gate " + version)
 	default:
@@ -47,11 +49,16 @@ Usage:
   pgate init                       Create default config file
   pgate hook install <target>      Install hook (claude | opencode | pi)
   pgate hook uninstall <target>    Uninstall hook
+  pgate update [flags]             Self-update to the latest GitHub release
   pgate version                    Show version
 
 Flags for "check":
   --json       Output result as JSON
   --detail     Show per-segment analysis
+
+Flags for "update":
+  --to <tag>   Update to a specific version (e.g. v1.2.3)
+  --force      Re-download even if already at the requested version
 `)
 }
 

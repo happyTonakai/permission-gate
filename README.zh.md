@@ -159,6 +159,27 @@ pgate init
 # 创建 ~/.config/permission-gate/config.toml（如果已存在则无操作）
 ```
 
+### 自更新
+
+`pgate` 可以直接把自己替换为最新的 GitHub Release，无需另外下载：
+
+```bash
+pgate update              # 升级到最新
+pgate update --to v1.2.3  # 指定版本（v 前缀可选）
+pgate update --force      # 即使已是该版本也强制重新下载
+```
+
+已是请求中的版本时，会打印 `"Already on latest version vX.Y.Z"` 并以退出码 0 退出，可以安全地接入脚本。
+
+更新流程：
+
+1. `GET /repos/happyTonakai/permission-gate/releases/latest`（使用 `--to` 时改为 `/releases/tags/<tag>`）
+2. 下载对应 Release 中的 `pgate_{OS}_{ARCH}` 资产
+3. 校验字节流像可执行文件（ELF / Mach-O magic number）
+4. 写入当前二进制旁边的临时文件，`fsync` 后通过 `os.Rename` 原子替换
+
+如果 `pgate` 是从源码构建（未使用 `-ldflags "-X main.version=..."` 注入版本号），`version` 包变量会是 `"dev"`，自更新会拒绝并提示改用 `go install @latest`。原地替换二进制不会影响已安装的钩子——OpenCode / pi 插件通过 `PATH` 查找 `pgate`，Claude 钩子通过安装时写入的绝对路径调用，原地重命名保留了这个路径。
+
 ---
 
 ## 配置文件

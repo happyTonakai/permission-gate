@@ -165,6 +165,27 @@ pgate init
 # Creates ~/.config/permission-gate/config.toml (no-op if it already exists)
 ```
 
+### Self-update
+
+`pgate` can replace itself with the latest GitHub release, no separate download needed:
+
+```bash
+pgate update              # latest
+pgate update --to v1.2.3  # specific version; v prefix optional
+pgate update --force      # re-download even if already on that version
+```
+
+Already on the requested version? The command prints `"Already on latest version vX.Y.Z"` and exits 0 — safe to wire into scripts.
+
+The update flow:
+
+1. `GET /repos/happyTonakai/permission-gate/releases/latest` (or `/releases/tags/<tag>` for `--to`)
+2. Download `pgate_{OS}_{ARCH}` from the matched release
+3. Validate the bytes look like an executable (ELF / Mach-O magic number)
+4. Write to a temp file next to the current binary, fsync, atomically rename into place via `os.Rename`
+
+If `pgate` was built from source (`go build` / `go install`) without `-ldflags "-X main.version=..."`, the `version` package variable is `"dev"` and self-update refuses with a hint pointing back to `go install @latest`. The hooks themselves keep working across an in-place update — the OpenCode / pi plugins look up `pgate` on `PATH`, and the Claude hook calls the absolute path written at install time, which is preserved by the atomic rename.
+
 ## Configuration
 
 ### File locations
