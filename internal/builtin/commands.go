@@ -699,6 +699,9 @@ func containerCommands() []string {
 func makeCommands() []string {
 	return []string{
 		"make", "make -j", "make --jobs",
+		// -n / --dry-run: print commands without executing. Common way
+		// to preview a Makefile before running it.
+		"make -n", "make --dry-run",
 		"cmake",
 		"ninja",
 		"meson",
@@ -729,6 +732,14 @@ func builtinShell() []string {
 		"disown",
 		"ulimit",
 		"hash",
+		// Shell syntax-check only (-n = noexec / parse-only). Does NOT
+		// execute the script. -c (execute arbitrary string) and bare
+		// script paths are intentionally left to fall through to ask.
+		"bash -n",
+		"sh -n",
+		"dash -n",
+		"zsh -n",
+		"fish -n",
 	}
 }
 

@@ -9174,7 +9174,16 @@ func generatedAllow() []string {
 		"zoxide",
 		"zoxide init",
 		"zoxide query",
-		"zsh",
+		// zsh manually dropped: safe-chains marks zsh as Inert (see
+		// _ref-safe-chains/commands/tools/zsh.toml) based on the
+		// presence of valued="-n", but the same description makes
+		// clear that bare `zsh` and `zsh -c` are full command-
+		// execution vectors. Emitting `zsh` as a flat allow lets
+		// `zsh -c 'rm -rf /'` and `zsh script.zsh` auto-allow,
+		// which is out of step with bash/sh/dash/fish (all ask).
+		// Only `zsh -n` (syntax check) is allowed via builtinShell().
+		// If convert.go is ever re-run, this entry must be removed
+		// again; the safe-chains zsh.toml needs to be patched first.
 		"fossil",
 		"fossil add",
 		"fossil addremove",

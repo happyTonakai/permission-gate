@@ -189,3 +189,52 @@ func shortCmd(cmd string) string {
 	}
 	return cmd
 }
+
+// TestShellSyntaxCheck guards the built-in allow rules for -n style
+// syntax-check invocations across common shells (bash, sh, dash, zsh,
+// fish) and make -n dry-run. None of these execute the script/recipe;
+// they only parse or print. Bare shells, -c (arbitrary command
+// execution), and real make invocations must stay ask.
+func TestShellSyntaxCheck(t *testing.T) {
+	engine, err := rules.New(&config.Config{}, config.MergePrepend, Allow(), Deny(), Ask(), DenyFlags())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	allow := []string{
+		`bash -n script.sh`,
+		`sh -n script.sh`,
+		`dash -n script.sh`,
+		`zsh -n script.sh`,
+		`fish -n script.fish`,
+		`bash -n -v script.sh`,
+		`bash -n /path/to/script.sh`,
+		`make -n`,
+		`make -n install`,
+		`make --dry-run`,
+		`make --dry-run build`,
+	}
+	for _, cmd := range allow {
+		if v := engine.Evaluate(cmd).Final.Level; v != verdict.LevelAllow {
+			t.Errorf("expected allow for %q, got %s", cmd, v)
+		}
+	}
+
+	ask := []string{
+		`bash`,
+		`sh`,
+		`dash`,
+		`fish`,
+		`zsh`,
+		`zsh script.zsh`,
+		`zsh -c 'echo hi'`,
+		`bash script.sh`,
+		`bash -c 'echo hi'`,
+		`sh -c 'echo hi'`,
+	}
+	for _, cmd := range ask {
+		if v := engine.Evaluate(cmd).Final.Level; v != verdict.LevelAsk {
+			t.Errorf("expected ask for %q, got %s", cmd, v)
+		}
+	}
+}
