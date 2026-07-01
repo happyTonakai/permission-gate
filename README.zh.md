@@ -93,7 +93,7 @@ cp pgate ~/.local/bin/    # 或放到 $PATH 中的任意目录
 ```bash
 pgate hook install claude      # 写入 ~/.claude/hooks/permission-gate.sh + 注册到 settings.json
 pgate hook install opencode    # 写入 ~/.config/opencode/plugins/permission-gate.ts
-pgate hook install pi          # 写入 ~/.pi/agent/extensions/permission-gate/index.ts
+pgate hook install pi          # 写入 ~/.pi/agent/extensions/permission-gate.ts
 ```
 
 卸载：

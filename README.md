@@ -97,7 +97,7 @@ go install github.com/happytonakai/permission-gate/cmd/pgate@latest
 ```bash
 pgate hook install claude   # writes ~/.claude/hooks/permission-gate.sh + registers in ~/.claude/settings.json
 pgate hook install opencode      # writes ~/.config/opencode/plugins/permission-gate.ts
-pgate hook install pi            # writes ~/.pi/agent/extensions/permission-gate/index.ts
+pgate hook install pi            # writes ~/.pi/agent/extensions/permission-gate.ts
 ```
 
 Each `install` is safe to re-run — it overwrites the existing hook / plugin / extension file with the latest template (use this to pick up bug fixes in the gate logic). For Claude Code, the `settings.json` registration is de-duplicated and prints "already registered" when nothing changed; for OpenCode and pi, the file is rewritten every time without a "no-op" message.

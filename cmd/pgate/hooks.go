@@ -437,7 +437,13 @@ export default function (pi: any) {
 }
 `
 
-const piHookDir = ".pi/agent/extensions/permission-gate"
+// Pi auto-discovers both layouts from ~/.pi/agent/extensions/:
+//
+//	*.ts             — single-file extension (we use this)
+//	*/index.ts       — directory form (older layout; cleaned up on install/uninstall)
+const piHookDir = ".pi/agent/extensions"
+const piHookFile = "permission-gate.ts"
+const piHookLegacyDir = "permission-gate" // older layout: extensions/permission-gate/index.ts
 
 func installPiAgentHook(binary string) error {
 	home, err := os.UserHomeDir()
@@ -449,11 +455,13 @@ func installPiAgentHook(binary string) error {
 		return err
 	}
 
-	indexPath := filepath.Join(dir, "index.ts")
-	if err := os.WriteFile(indexPath, []byte(piAgentExtension), 0644); err != nil {
+	removeLegacyPiAgentHook(home)
+
+	hookPath := filepath.Join(dir, piHookFile)
+	if err := os.WriteFile(hookPath, []byte(piAgentExtension), 0644); err != nil {
 		return err
 	}
-	fmt.Println("Extension written to", indexPath)
+	fmt.Println("Extension written to", hookPath)
 	return nil
 }
 
@@ -462,10 +470,31 @@ func removePiAgentHook() error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Join(home, piHookDir)
-	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
+	hookPath := filepath.Join(home, piHookDir, piHookFile)
+	if err := os.Remove(hookPath); err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	removeLegacyPiAgentHook(home)
 	fmt.Println("Removed Pi Agent extension")
 	return nil
+}
+
+// removeLegacyPiAgentHook best-effort removes the older directory-form
+// extension at ~/.pi/agent/extensions/permission-gate/. If present it
+// would be auto-discovered by pi alongside the new single-file extension,
+// causing the gate to run twice. Errors are reported to stderr but do
+// not abort the caller.
+func removeLegacyPiAgentHook(home string) {
+	legacy := filepath.Join(home, piHookDir, piHookLegacyDir)
+	if _, err := os.Stat(legacy); err != nil {
+		if !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Warning: could not stat legacy extension directory %s: %v\n", legacy, err)
+		}
+		return
+	}
+	if err := os.RemoveAll(legacy); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not remove legacy extension directory %s: %v\n", legacy, err)
+		return
+	}
+	fmt.Println("Removed legacy extension directory:", legacy)
 }
