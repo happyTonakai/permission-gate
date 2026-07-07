@@ -242,7 +242,7 @@ function cleanupOldLogs(keepDays: number) {
     const cutoff = Date.now() - keepDays * MS_PER_DAY
     for (const name of readdirSync(LOG_DIR)) {
       if (!name.startsWith("permission-gate-")) continue
-      const datePart = name.slice(17, 27) // "permission-gate-YYYY-MM-DD.log" → "YYYY-MM-DD"
+      const datePart = name.slice(16, 26) // "permission-gate-YYYY-MM-DD.log" → "YYYY-MM-DD"
       const t = Date.parse(datePart)
       if (Number.isFinite(t) && t < cutoff) {
         unlinkSync(join(LOG_DIR, name))
@@ -376,7 +376,7 @@ function cleanupOldLogs(keepDays: number) {
     const cutoff = Date.now() - keepDays * MS_PER_DAY;
     for (const name of readdirSync(LOG_DIR)) {
       if (!name.startsWith("permission-gate-")) continue;
-      const datePart = name.slice(17, 27);
+      const datePart = name.slice(16, 26);
       const t = Date.parse(datePart);
       if (Number.isFinite(t) && t < cutoff) {
         unlinkSync(join(LOG_DIR, name));
