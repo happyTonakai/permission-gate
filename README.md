@@ -165,6 +165,25 @@ pgate init
 # Creates ~/.config/permission-gate/config.toml (no-op if it already exists)
 ```
 
+### Add a command to the allow list
+
+When an agent hits an unknown command and keeps getting prompted, you can append a spec to the allow list straight from the CLI:
+
+```bash
+pgate add docker compose up     # positional args are joined with a space
+pgate add "weird-tool"          # or a single quoted string
+pgate add --scope=project jq    # write to <cwd>/.permission-gate.toml instead
+```
+
+Behavior:
+
+- Missing config file → created with just the new entry. `--scope=project` will create `<cwd>/.permission-gate.toml` if absent.
+- Existing entry → no-op; the file's mtime is left alone (no spurious writes from duplicate `pgate add` calls).
+- Comments, blank lines, formatting, and any `merge_mode` placement in the existing file are preserved verbatim. The writer uses text-level surgical editing (no marshal/unmarshal round-trip), so even `merge_mode = "..."` placed after a `[table]` header — a known go-toml/v2 quirk — survives intact.
+- Scope resolution matches the read path: `--scope=user` honors `PERMISSION_GATE_CONFIG`, `--scope=project` honors `PERMISSION_GATE_PROJECT_CONFIG`.
+
+Security note: `pgate add` itself is gated as `ask` in the built-in rules. An agent cannot grant itself new permissions without the user approving the `pgate add …` invocation first. The base `pgate` rule stays in `allow` so `check` / `update` / `version` / `init` keep working without a prompt.
+
 ### Self-update
 
 `pgate` can replace itself with the latest GitHub release, no separate download needed:
@@ -413,14 +432,18 @@ merge_mode = "overwrite"
 
 ```
 cmd/pgate/                  # CLI entry point
-  main.go                   # check / init / hook / version subcommands
+  main.go                   # add / check / init / hook / update / version dispatch
+  add.go                    # `pgate add` subcommand (allow-list entry injection)
   hooks.go                  # Claude Code / OpenCode / pi hook installer
+  update.go                 # `pgate update` self-replacement
 
 internal/
   verdict/verdict.go        # Core types (Allow / Deny / Ask)
   analyze/analyze.go        # AST-based command extraction
   rules/engine.go           # Rule matching engine
-  config/config.go          # TOML config loading and merging
+  config/
+    config.go               # TOML config loading and merging
+    writer.go               # Surgical-edit allow-list writer (pgate add)
   builtin/
     commands.go             # ~400 hand-curated commands
     generated_commands.go   # ~9,785 auto-generated patterns

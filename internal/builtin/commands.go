@@ -57,6 +57,7 @@ func Ask() []string {
 		ghAsk(),
 		deploymentCommands(),
 		installCommands(),
+		permissionManagementCommands(),
 	)
 }
 
@@ -1060,5 +1061,25 @@ func installCommands() []string {
 		"uv pip install",
 		"brew install",
 		"brew cask install",
+	}
+}
+
+// ─── Permission-gate self-modification / ask ─────────────────
+//
+// `pgate add` modifies the user's config file from the command line.
+// Without an ask gate, an agent could self-grant any permission just by
+// running `pgate add whatever` — defeating the whole gate. The ask
+// tier forces a human to approve each modification; once approved, the
+// added spec is in effect for every subsequent `pgate check`.
+//
+// `pgate add` is listed here as a bare prefix (`pgate add`). The base
+// `pgate` rule in utilityCommands stays in the allow tier so the rest
+// of the CLI (check / update / version / init) keeps working without a
+// prompt. The engine evaluates deny → flagDeny → ask → allow in order
+// (see internal/rules/engine.go), so the more-specific ask rule wins
+// over the broader allow rule for any `pgate add …` invocation.
+func permissionManagementCommands() []string {
+	return []string{
+		"pgate add",
 	}
 }

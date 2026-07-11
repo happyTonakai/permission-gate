@@ -25,6 +25,8 @@ func main() {
 	}
 
 	switch os.Args[1] {
+	case "add":
+		runAdd(os.Args[2:])
 	case "check":
 		runCheck(os.Args[2:])
 	case "init":
@@ -45,12 +47,16 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `Permission Gate — AST-based bash command permission checker.
 
 Usage:
+  pgate add [flags] <command>...    Append <command> to the allow list
   pgate check [flags] <command>    Check a command against the rules
   pgate init                       Create default config file
   pgate hook install <target>      Install hook (claude | opencode | pi)
   pgate hook uninstall <target>    Uninstall hook
   pgate update [flags]             Self-update to the latest GitHub release
   pgate version                    Show version
+
+Flags for "add":
+  --scope user|project   Target config file (default: user)
 
 Flags for "check":
   --json       Output result as JSON

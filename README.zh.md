@@ -159,6 +159,25 @@ pgate init
 # 创建 ~/.config/permission-gate/config.toml（如果已存在则无操作）
 ```
 
+### 添加命令到允许列表
+
+当 Agent 遇到未知命令反复被提示时，可以直接从 CLI 向允许列表追加一条规则：
+
+```bash
+pgate add docker compose up     # 位置参数用空格拼接
+pgate add "weird-tool"          # 或一个带引号的字符串
+pgate add --scope=project jq    # 写入 <cwd>/.permission-gate.toml
+```
+
+行为：
+
+- 配置文件不存在 → 自动创建仅包含新条目的最小文件。`--scope=project` 会在必要时创建 `<cwd>/.permission-gate.toml`。
+- 条目已存在 → 不操作，文件的 mtime 不变（避免重复调用 `pgate add` 带来无效写入）。
+- 原有文件中的注释、空行、格式以及 `merge_mode` 位置逐字保留。写入器采用文本级 surgical edit（不走 marshal/unmarshal 路线），因此即使 `merge_mode = "..."` 被放在 `[table]` 表头之后——go-toml/v2 已知的解析 quirk——也能完整保留。
+- 路径解析与读取路径一致：`--scope=user` 尊重 `PERMISSION_GATE_CONFIG`，`--scope=project` 尊重 `PERMISSION_GATE_PROJECT_CONFIG`。
+
+安全说明：`pgate add` 本身在内置规则中归为 `ask`。Agent 不能未经用户授权就给自己增加权限——必须先让用户批准 `pgate add …` 的调用。底层的 `pgate` 仍留在 `allow` 层，所以 `check` / `update` / `version` / `init` 不会被提示。
+
 ### 自更新
 
 `pgate` 可以直接把自己替换为最新的 GitHub Release，无需另外下载：
@@ -281,14 +300,18 @@ Permission Gate 内置了约 10,000 条安全命令模式，涵盖：
 
 ```
 cmd/pgate/                  # CLI 入口
-  main.go                   # check / init / hook / version 子命令
+  main.go                   # add / check / init / hook / update / version 分发
+  add.go                    # `pgate add` 子命令（允许列表条目注入）
   hooks.go                  # Claude / OpenCode / pi 钩子安装器
+  update.go                 # `pgate update` 自更新
 
 internal/
   verdict/verdict.go        # 核心类型（Allow / Deny / Ask）
   analyze/analyze.go        # 基于 AST 的命令提取
   rules/engine.go           # 规则匹配引擎
-  config/config.go          # TOML 配置加载与合并
+  config/
+    config.go               # TOML 配置加载与合并
+    writer.go               # 允许列表 surgical-edit 写入器（pgate add）
   builtin/
     commands.go             # 约 400 条手工精选命令
     generated_commands.go   # 约 9,785 条自动生成规则
