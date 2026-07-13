@@ -88,20 +88,6 @@ exec %s hook claude-request
 	return nil
 }
 
-type claudeSettings struct {
-	Hooks map[string][]claudeHookGroup `json:"hooks"`
-}
-
-type claudeHookGroup struct {
-	Hooks   []claudeHookEntry `json:"hooks"`
-	Matcher string            `json:"matcher"`
-}
-
-type claudeHookEntry struct {
-	Command string `json:"command"`
-	Type    string `json:"type"`
-}
-
 func registerClaudeHook(hookPath string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {

@@ -1,0 +1,51 @@
+version: "2"
+
+# 起步配置：与 go vet 互补的几个核心 linter。
+# 后续可按需加 (gocritic / gosec / bodyclose / exportloopref 等)。
+
+linters:
+  enable:
+    - errcheck      # 检测未检查的 error 返回值
+    - govet         # go vet 套件（含 shadow 等）
+    - ineffassign   # 检测无效赋值
+    - staticcheck   # 100+ 检查，覆盖大量常见 bug
+    - unused        # 检测未使用的常量、变量、函数、类型
+
+  # v2 起 exclusions 放在 linters.exclusions（替代顶层 issues：）。
+  # 路径排除也在这里 —— run.exclude-dirs 在 v2 已被移除。
+  exclusions:
+    presets:
+      - common-false-positives
+      - std-error-handling
+    rules:
+      # errcheck 在测试文件里默认噪声太高（test helper 的 cleanup / 临时文件写入 /
+      # unclosed body / env reset 等）。如果 test 漏掉真实 IO 错误，通常会表现为
+      # 测试失败或 panic，errcheck 在这里几乎不增加 signal。
+      - path: _test\.go
+        linters:
+          - errcheck
+
+      # IO / 文件系统 setup 路径：失败通常已经被 MkdirAll 原子性 / 启动阶段日志覆盖。
+      # 覆盖 os.MkdirAll / os.Chmod / os.WriteFile / os.Setenv / os.Unsetenv /
+      # io.Copy / filepath.Walk。
+      - linters:
+          - errcheck
+        text: 'Error return value of `(os\.(MkdirAll|Chmod|WriteFile|Unsetenv|Setenv)|io\.Copy|filepath\.Walk)` is not checked'
+
+      # defer resp.Body.Close() 是标准 idiom；close 失败通常意味着连接已被对端重置，
+      # 上层 reader.Read 已经会报 EOF，没有可恢复动作。
+      - linters:
+          - errcheck
+        text: 'Error return value of `resp\.Body\.Close` is not checked'
+
+      # CLI 子命令用 flag.NewFlagSet(..., flag.ExitOnError)：bad flag 会让 Parse
+      # 内部直接 os.Exit，返回的 error 不可达，errcheck 是 false positive。
+      # 覆盖 cmd/pgate/{add,main,update}.go 的 fs.Parse(args) 调用。
+      - linters:
+          - errcheck
+        path: cmd/pgate/
+        text: 'Error return value of `fs\.Parse` is not checked'
+
+run:
+  timeout: 5m
+  tests: true

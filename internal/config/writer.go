@@ -464,14 +464,6 @@ func isIdentChar(b byte) bool {
 		(b >= '0' && b <= '9') || b == '_' || b == '-'
 }
 
-func skipWS(b []byte) int {
-	i := 0
-	for i < len(b) && (b[i] == ' ' || b[i] == '\t') {
-		i++
-	}
-	return i
-}
-
 // findCommandsArray locates the matching `]` of the array that begins at
 // content[arrStart] (which is `[`). Returns open and close indices and
 // ok=false if no match is found. Used to bound the "inner" array content

@@ -282,7 +282,7 @@ func handleClaudeRequest() {
 			},
 		},
 	}
-	json.NewEncoder(os.Stdout).Encode(resp)
+	_ = json.NewEncoder(os.Stdout).Encode(resp)
 }
 
 type claudeHookResponse struct {

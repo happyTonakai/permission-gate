@@ -204,7 +204,7 @@ func writeGenerated(outPath string, allCmds []string) error {
 	sb.WriteString("func generatedAllow() []string {\n")
 	sb.WriteString("\treturn []string{\n")
 	for _, c := range allCmds {
-		sb.WriteString(fmt.Sprintf("\t\t%q,\n", c))
+		fmt.Fprintf(&sb, "\t\t%q,\n", c)
 	}
 	sb.WriteString("\t}\n")
 	sb.WriteString("}\n")

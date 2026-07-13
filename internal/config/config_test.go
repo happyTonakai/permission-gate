@@ -7,17 +7,6 @@ import (
 	"testing"
 )
 
-func writeTempConfig(t *testing.T, dir, filename, content string) {
-	t.Helper()
-	path := filepath.Join(dir, filename)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 	if cfg == "" {

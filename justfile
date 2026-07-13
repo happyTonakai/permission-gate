@@ -41,9 +41,14 @@ clean:
 uninstall:
     rm -f {{ install_dir }}/{{ binary }}
 
-# Lint with staticcheck
+# Lint with golangci-lint v2（与 CI .github/workflows/lint.yml 同配置）。
+# 需要本机先装好：brew install golangci-lint 或
+# go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest。
+# 先 config verify 再 run：CI 的 golangci-lint-action 默认会跑 config verify，
+# 本地也对齐、提前发现 schema 非法问题。
 lint:
-    staticcheck ./...
+    golangci-lint config verify --config .golangci.yaml
+    golangci-lint run --config .golangci.yaml ./...
 
 # Format code
 fmt:
