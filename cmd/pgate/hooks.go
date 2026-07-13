@@ -221,6 +221,7 @@ function log(level: string, command: string, reason?: string) {
 }
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000
+const bt = String.fromCharCode(96)
 
 function cleanupOldLogs(keepDays: number) {
   try {
@@ -238,6 +239,8 @@ function cleanupOldLogs(keepDays: number) {
 }
 
 export const PermissionGatePlugin: Plugin = async ({ $ }) => {
+  let denialCount = 0
+
   try {
     await $` + bt + `which pgate` + bt + `.quiet()
   } catch {
@@ -272,8 +275,15 @@ export const PermissionGatePlugin: Plugin = async ({ $ }) => {
         const lvl = parsed.final?.level
 
         if (lvl === 1) {
-          const msg = "Permission Gate: " + (parsed.final?.reason ?? "denied")
-          log("deny", command, msg)
+          const ruleReason = parsed.final?.reason ?? "denied"
+          denialCount++
+          let msg: string
+          if (denialCount === 1) {
+            msg = bt + "\nPermission Gate denied this command: " + ruleReason + "\n\nThis operation is classified as dangerous. The following two guidelines apply:\n\n1. If the user's **goal** can be accomplished by a fundamentally different, safer approach (e.g. reading logs instead of opening a shell), use that safer approach. This is finding a better way to achieve the intent.\n\n2. Do NOT attempt to rephrase, reword, or otherwise rewrite this same command in a different form to bypass the check. Switching docker exec -it container bash to docker exec -it container sh or using nsenter to get the same shell access is still performing the same dangerous operation — that is bypassing, not a safer alternative.\n\nIf the user's instruction truly requires this exact command and there is no fundamentally safer alternative, you must stop and explicitly ask the user to grant the required permission — do not try to work around the gate." + bt
+          } else {
+            msg = bt + "\nPermission Gate denied this command: " + ruleReason + "\n\nRemember the guidelines: do not attempt to bypass and seek safer alternatives if possible. If neither works, you must ask the user for permission." + bt
+          }
+          log("deny", command, "count=" + denialCount + " reason=" + ruleReason)
           return { block: true, reason: msg }
         }
         if (lvl === 2) {
@@ -372,6 +382,8 @@ function cleanupOldLogs(keepDays: number) {
 }
 
 export default function (pi: any) {
+  let denialCount = 0;
+
   pi.on("tool_call", async (event: any, ctx: any) => {
     if (event.toolName !== "bash") return;
 
@@ -397,8 +409,15 @@ export default function (pi: any) {
         // Deny means deny — block immediately, no popup. Showing a confirm
         // dialog here would make Deny indistinguishable from Ask, and a
         // "user override" path would let denied commands run anyway.
-        const reason = "Permission Gate: " + (result.final?.reason ?? "denied");
-        log("deny", command, result.final?.reason);
+        const ruleReason = result.final?.reason ?? "denied";
+        denialCount++;
+        let reason: string;
+        if (denialCount === 1) {
+          reason = bt + "\nPermission Gate denied this command: " + ruleReason + "\n\nThis operation is classified as dangerous. The following two guidelines apply:\n\n1. If the user's **goal** can be accomplished by a fundamentally different, safer approach (e.g. reading logs instead of opening a shell), use that safer approach. This is finding a better way to achieve the intent.\n\n2. Do NOT attempt to rephrase, reword, or otherwise rewrite this same command in a different form to bypass the check. Switching docker exec -it container bash to docker exec -it container sh or using nsenter to get the same shell access is still performing the same dangerous operation — that is bypassing, not a safer alternative.\n\nIf the user's instruction truly requires this exact command and there is no fundamentally safer alternative, you must stop and explicitly ask the user to grant the required permission — do not try to work around the gate." + bt;
+        } else {
+          reason = bt + "\nPermission Gate denied this command: " + ruleReason + "\n\nRemember the guidelines: do not attempt to bypass and seek safer alternatives if possible. If neither works, you must ask the user for permission." + bt;
+        }
+        log("deny", command, "count=" + denialCount + " reason=" + ruleReason);
         return { block: true, reason };
       }
 
