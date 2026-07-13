@@ -37,8 +37,56 @@ func ParseScope(s string) (Scope, error) {
 	}
 }
 
-// AddAllowCommand appends spec to the [allow].commands list of the chosen
-// scope's config file. On success it returns:
+// Action selects which of the three permission tiers the new entry
+// belongs to. On-disk these are the [allow], [ask], and [deny] TOML
+// sections; sectionName maps an Action to its header text.
+//
+// Only the three documented values are accepted. ActionAllow is also
+// the implicit default of the CLI's --action flag, mirroring the
+// pre-action-flag behavior of `pgate add` (which always appended to
+// [allow]).
+type Action string
+
+const (
+	ActionAllow Action = "allow"
+	ActionAsk   Action = "ask"
+	ActionDeny  Action = "deny"
+)
+
+func (a Action) sectionName() string {
+	switch a {
+	case ActionAllow:
+		return "allow"
+	case ActionAsk:
+		return "ask"
+	case ActionDeny:
+		return "deny"
+	default:
+		// Unreachable: ParseAction rejects anything outside the set.
+		return string(a)
+	}
+}
+
+// ParseAction normalizes the --action flag's value. Empty input is
+// treated as ActionAllow so `pgate add <command>` (no flag) still
+// appends to [allow] — matching the behavior of the version that
+// shipped before this flag existed.
+func ParseAction(s string) (Action, error) {
+	switch Action(s) {
+	case "":
+		return ActionAllow, nil
+	case ActionAllow, ActionAsk, ActionDeny:
+		return Action(s), nil
+	default:
+		return "", fmt.Errorf("invalid action %q (want allow|ask|deny)", s)
+	}
+}
+
+// AddCommand appends spec to the [action].commands list of the chosen
+// scope's config file — i.e. [allow].commands when action=allow,
+// [ask].commands when action=ask, [deny].commands when action=deny.
+//
+// On success it returns:
 //
 //	path    — absolute path of the file actually written (or already present)
 //	added   — true if spec is now in the file; false if it was already present
@@ -49,11 +97,11 @@ func ParseScope(s string) (Scope, error) {
 // comments, blank lines, formatting, and even top-level keys placed
 // AFTER a [table] header (a known go-toml/v2 quirk) survive intact.
 //
-// Behavior matrix:
+// Behavior matrix (per action):
 //
 //   - Missing file                  → create a minimal one (just the entry)
-//   - File exists, no [allow]       → append `[allow]\ncommands = ["spec"]`
-//   - File exists, [allow] no cmds  → insert `commands = ["spec"]` after [allow]
+//   - File exists, no [action]      → append `[action]\ncommands = ["spec"]`
+//   - File exists, [action] no cmds → insert `commands = ["spec"]` after [action]
 //   - commands = []                 → replace with `commands = ["spec"]`
 //   - commands = ["a","b"] 1-line   → `commands = ["a","b","spec"]`
 //   - commands = [ multi-line ]     → insert spec on a new line; respect trailing comma
@@ -61,7 +109,12 @@ func ParseScope(s string) (Scope, error) {
 //
 // Inline tables in commands are passed over by a small bracket/string
 // scanner — see arrayScanner. Strings are TOML-escaped via tomlEncodeString.
-func AddAllowCommand(spec string, scope Scope) (path string, added bool, err error) {
+//
+// Action has no effect on dedup scope: a spec is treated as a duplicate
+// only if an exact bare-string match is found in the same section.
+// `pgate add --action=ask foo` followed by `pgate add --action=deny foo`
+// writes both entries; the user asked for two separate rules.
+func AddCommand(spec string, action Action, scope Scope) (path string, added bool, err error) {
 	target, err := resolveScopePath(scope)
 	if err != nil {
 		return "", false, err
@@ -76,7 +129,7 @@ func AddAllowCommand(spec string, scope Scope) (path string, added bool, err err
 		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 			return "", false, fmt.Errorf("mkdir %s: %w", filepath.Dir(target), err)
 		}
-		content := buildMinimalConfig(spec)
+		content := buildMinimalConfig(spec, action)
 		if err := os.WriteFile(target, content, 0644); err != nil {
 			return "", false, fmt.Errorf("write %s: %w", target, err)
 		}
@@ -84,7 +137,7 @@ func AddAllowCommand(spec string, scope Scope) (path string, added bool, err err
 	}
 
 	// Branch 2: existing file → surgical edit.
-	out, dedup, err := spliceAllowCommand(raw, spec)
+	out, dedup, err := spliceCommand(raw, spec, action)
 	if err != nil {
 		return "", false, fmt.Errorf("edit %s: %w", target, err)
 	}
@@ -98,7 +151,7 @@ func AddAllowCommand(spec string, scope Scope) (path string, added bool, err err
 }
 
 // resolveScopePath maps a Scope to the on-disk path of the file that
-// AddAllowCommand will read & write. centralizes the env / home / cwd
+// AddCommand will read & write. centralizes the env / home / cwd
 // resolution so both the user and project branches can be unit-tested.
 func resolveScopePath(scope Scope) (string, error) {
 	switch scope {
@@ -116,45 +169,51 @@ func resolveScopePath(scope Scope) (string, error) {
 }
 
 // buildMinimalConfig emits a brand-new config file containing only the
-// just-added spec. Kept deliberately minimal — no [deny] / [ask] sections,
-// no comments — so the file the user sees matches exactly what they did
-// (one allow entry). Future `pgate add` calls will hit spliceAllowCommand
-// instead and start preserving whatever is there.
-func buildMinimalConfig(spec string) []byte {
+// just-added spec under the chosen action's section header. Kept
+// deliberately minimal — no extra sections, no comments — so the file
+// the user sees matches exactly what they did (one entry under one
+// header). Future `pgate add` calls will hit spliceCommand instead and
+// start preserving whatever is there.
+func buildMinimalConfig(spec string, action Action) []byte {
 	var b bytes.Buffer
-	b.WriteString("[allow]\ncommands = [")
+	b.WriteByte('[')
+	b.WriteString(action.sectionName())
+	b.WriteString("]\ncommands = [")
 	b.WriteString(tomlEncodeString(spec))
 	b.WriteString("]\n")
 	return b.Bytes()
 }
 
-// spliceAllowCommand performs the text-level surgical edit on an existing
-// file's bytes. Returns the new bytes plus a dedup flag (true means caller
+// spliceCommand performs the text-level surgical edit on an existing
+// file's bytes for the section named by action ([allow] / [ask] /
+// [deny]). Returns the new bytes plus a dedup flag (true means caller
 // should NOT write back, the content is unchanged).
 //
 // All complexity lives here:
 //
-//  1. Find the [allow] section's header. (findAllowSection returns only
-//     the start offset; section-boundary detection is delegated to
-//     findCommandsLine, which handles multi-line `commands =\n[…]`.)
+//  1. Find the section's header (allow / ask / deny). (findSection
+//     returns only the start offset; section-boundary detection is
+//     delegated to findCommandsLine, which handles multi-line
+//     `commands =\n[…]`.)
 //
-//  2. Within [allow], find the `commands =` line, then the `[...]` array's
-//     matching `]` (arrayScanner handles nested arrays, strings, comments,
-//     inline tables).
+//  2. Within the section, find the `commands =` line, then the `[...]`
+//     array's matching `]` (arrayScanner handles nested arrays,
+//     strings, comments, inline tables).
 //
 //  3. Decide insertion strategy based on what's there:
-//     - no [allow]: caller has already handled this (create new file)
-//     - [allow] but no commands line: insert one right after [allow]
+//     - no section: caller has already handled this (create new file)
+//     - section but no commands line: insert one right after header
 //     - commands = []: replace contents
 //     - single-line non-empty: insert `, "spec"` before `]`
 //     - multi-line: insert on a new line, adding `,` if last entry lacks it
 //
 //  4. Dedup check: before any edit, scan the array for an exact bare-string
 //     match of spec. If found, return dedup=true with content unchanged.
-func spliceAllowCommand(content []byte, spec string) ([]byte, bool, error) {
-	secStart, hasAllow := findAllowSection(content)
-	if !hasAllow {
-		// No [allow] section. Append a new one at EOF, preserving a
+func spliceCommand(content []byte, spec string, action Action) ([]byte, bool, error) {
+	header := action.sectionName()
+	secStart, hasSection := findSection(content, header)
+	if !hasSection {
+		// No matching section. Append a new one at EOF, preserving a
 		// trailing newline if the original ended with one.
 		var out bytes.Buffer
 		out.Write(content)
@@ -166,20 +225,22 @@ func spliceAllowCommand(content []byte, spec string) ([]byte, bool, error) {
 		if len(bytes.TrimSpace(content)) > 0 {
 			out.WriteByte('\n')
 		}
-		out.WriteString("[allow]\ncommands = [")
+		out.WriteByte('[')
+		out.WriteString(header)
+		out.WriteString("]\ncommands = [")
 		out.WriteString(tomlEncodeString(spec))
 		out.WriteString("]\n")
 		return out.Bytes(), false, nil
 	}
 
-	// Within [allow], find the `commands =` line. Skip past the header
-	// line first so the `[allow]` token itself doesn't trip the
+	// Within the section, find the `commands =` line. Skip past the
+	// header line first so the section-token itself doesn't trip the
 	// "we left this section" check below.
 	bodyStart := lineEnd(content, secStart)
 	cmdsStart, hasCmds := findCommandsLine(content, bodyStart, len(content))
 
 	if !hasCmds {
-		// Insert a new commands line right after the [allow] header.
+		// Insert a new commands line right after the section header.
 		insertAt := bodyStart
 		var b bytes.Buffer
 		b.Write(content[:insertAt])
@@ -193,7 +254,7 @@ func spliceAllowCommand(content []byte, spec string) ([]byte, bool, error) {
 	// Find the array `[...]` bounds.
 	arrOpen, arrClose, ok := findCommandsArray(content, cmdsStart, len(content))
 	if !ok {
-		return nil, false, fmt.Errorf("could not locate [allow].commands array")
+		return nil, false, fmt.Errorf("could not locate [%s].commands array", header)
 	}
 
 	// Dedup: scan for exact bare-string match within the array.
@@ -215,19 +276,22 @@ func spliceAllowCommand(content []byte, spec string) ([]byte, bool, error) {
 	return out.Bytes(), false, nil
 }
 
-// findAllowSection locates the [allow] section header. Returns the byte
-// offset of the `[allow]` line and a boolean indicating whether the
+// findSection locates the section header named `name` (e.g. "allow",
+// "ask", "deny") at the top level of the TOML file. Returns the byte
+// offset of the `[name]` line and a boolean indicating whether the
 // section was found.
 //
 // Note: `end` is always `len(content)`. Section-boundary detection (the
-// "we've left [allow] into [deny]" decision) is delegated to
+// "we've left one section into another" decision) is delegated to
 // findCommandsLine, which has more context (it scans line-by-line and
 // can spot the continuation case for multi-line `commands =\n[ … ]`).
 //
-// Sections are matched literally — `[allow]`, not `[allow.something]` and
-// not `[allowing]`. The closing `]` of `[allow]` must be the last char
+// Sections are matched literally — `[name]`, not `[name.something]` and
+// not a prefix of a longer section name (`[allow]` does not match
+// `[allowing]`). The closing `]` of the header must be the last char
 // before EOL or whitespace.
-func findAllowSection(content []byte) (start int, found bool) {
+func findSection(content []byte, name string) (start int, found bool) {
+	prefix := []byte("[" + name + "]")
 	// Walk line-by-line so we can correctly match a header line.
 	lineStart := 0
 	for lineStart <= len(content) {
@@ -240,11 +304,12 @@ func findAllowSection(content []byte) (start int, found bool) {
 		}
 		line := content[lineStart:stop]
 		trimmed := bytes.TrimLeft(line, " \t")
-		if bytes.HasPrefix(trimmed, []byte("[allow]")) {
-			// Make sure it's exactly [allow], not a prefix of another
-			// section name. After "[allow]" the rest must be whitespace
-			// or comment — anything else means it's a longer name.
-			rest := trimmed[len("[allow]"):]
+		if bytes.HasPrefix(trimmed, prefix) {
+			// Make sure it's exactly the section name, not a prefix of
+			// a longer section. After "[name]" the rest must be
+			// whitespace or comment — anything else means it's a longer
+			// name (e.g. "[askfoo]").
+			rest := trimmed[len(prefix):]
 			if isOnlyWhitespaceOrComment(rest) {
 				return lineStart, true
 			}
@@ -252,7 +317,7 @@ func findAllowSection(content []byte) (start int, found bool) {
 		if lineEndIdx < 0 {
 			return 0, false
 		}
-		// Advance to the next line. Caller distinguishes "found [allow]"
+		// Advance to the next line. Caller distinguishes "found section"
 		// from "didn't" via the boolean return.
 		lineStart = stop + 1
 	}
@@ -267,18 +332,19 @@ func isOnlyWhitespaceOrComment(b []byte) bool {
 	return i == len(b) || b[i] == '#'
 }
 
-// findCommandsLine searches for the `[` that opens the [allow].commands
-// array, whether it appears on the same line as `commands =` (the
-// common case) or on the next line as a multi-line value continuation.
+// findCommandsLine searches for the `[` that opens the section's
+// `commands` array, whether it appears on the same line as `commands =`
+// (the common case) or on the next line as a multi-line value continuation.
 //
 // Returns the byte offset of the `[` and ok=true, or ok=false if no
-// commands array is present in [allow].
+// commands array is present in the section.
 //
-// Recognized shapes:
+// Recognized shapes (let `<sec>` be the section header in question —
+// [allow] / [ask] / [deny]):
 //
-//	[allow]                                    ← start of section
-//	commands = [...]                           ← common: array on same line
-//	commands =                                 ← rare but legal: array on next line
+//	<sec>                                       ← start of section
+//	commands = [...]                            ← common: array on same line
+//	commands =                                  ← rare but legal: array on next line
 //	[...]
 //
 // Limitations (documented as known, not handled):
@@ -288,12 +354,14 @@ func isOnlyWhitespaceOrComment(b []byte) bool {
 //     with `=` and fall through. The array still exists, but pgate add
 //     will insert a duplicate `commands =` line, producing invalid TOML.
 //     Hand-fix: move the array up onto the same line.
-//   - `[allow]\nfoo = [...]\ncommands = [...]` — if an unrelated key in
-//     [allow] ends with `=` and the next line starts with `[`, we may
-//     mis-attribute that `[` to `commands`. In practice [allow] rarely
-//     has multiple top-level keys; if it does, place `commands` first.
-//   - Sub-tables / dotted keys ([allow.x], allow.commands = ...) are
-//     not supported; the existing config schema only has `commands`.
+//   - `<sec>\nfoo = [...]\ncommands = [...]` — if an unrelated key in
+//     the section ends with `=` and the next line starts with `[`, we
+//     may mis-attribute that `[` to `commands`. In practice these
+//     sections rarely have multiple top-level keys; if they do, place
+//     `commands` first.
+//   - Sub-tables / dotted keys (<sec>.x, <sec>.commands = ...) are not
+//     supported; the existing config schema only has `commands` at the
+//     section root.
 func findCommandsLine(content []byte, secStart, secEnd int) (arrayStart int, ok bool) {
 	i := secStart
 	// pendingEq is true when the previous non-blank/non-comment line ended
@@ -333,7 +401,7 @@ func findCommandsLine(content []byte, secStart, secEnd int) (arrayStart int, ok 
 		}
 
 		// If this line starts with `[` and we weren't in continuation
-		// mode, it's a new section header — we've left [allow].
+		// mode, it's a new section header — we've left the current one.
 		if trimmed[0] == '[' {
 			return 0, false
 		}

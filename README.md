@@ -170,19 +170,23 @@ pgate init
 When an agent hits an unknown command and keeps getting prompted, you can append a spec to the allow list straight from the CLI:
 
 ```bash
-pgate add docker compose up     # positional args are joined with a space
-pgate add "weird-tool"          # or a single quoted string
-pgate add --scope=project jq    # write to <cwd>/.permission-gate.toml instead
+pgate add docker compose up         # positional args are joined with a space
+pgate add "weird-tool"              # or a single quoted string
+pgate add --scope=project jq        # write to <cwd>/.permission-gate.toml instead
+pgate add --action=ask 'curl bad'   # route into [ask].commands — always prompt
+pgate add --action=deny 'rm -rf /'  # route into [deny].commands — auto-block
 ```
+
+The `--action` flag picks which tier the new entry belongs to (default `allow`, matching the behavior before the flag existed). All three land in the same config file and follow the same dedup / preservation rules below; the only difference is the section header.
 
 Behavior:
 
-- Missing config file → created with just the new entry. `--scope=project` will create `<cwd>/.permission-gate.toml` if absent.
-- Existing entry → no-op; the file's mtime is left alone (no spurious writes from duplicate `pgate add` calls).
+- Missing config file → created with just the new entry under the chosen `[action]` header. `--scope=project` will create `<cwd>/.permission-gate.toml` if absent.
+- Existing entry within that section → no-op; the file's mtime is left alone (no spurious writes from duplicate `pgate add` calls). The same spec under a different `--action` is NOT a duplicate — `pgate add rm` (allow) followed by `pgate add --action=deny rm` writes both.
 - Comments, blank lines, formatting, and any `merge_mode` placement in the existing file are preserved verbatim. The writer uses text-level surgical editing (no marshal/unmarshal round-trip), so even `merge_mode = "..."` placed after a `[table]` header — a known go-toml/v2 quirk — survives intact.
 - Scope resolution matches the read path: `--scope=user` honors `PERMISSION_GATE_CONFIG`, `--scope=project` honors `PERMISSION_GATE_PROJECT_CONFIG`.
 
-Security note: `pgate add` itself is gated as `ask` in the built-in rules. An agent cannot grant itself new permissions without the user approving the `pgate add …` invocation first. The base `pgate` rule stays in `allow` so `check` / `update` / `version` / `init` keep working without a prompt.
+Security note: `pgate add` itself is gated as `ask` in the built-in rules, *for every value of `--action`*. An agent cannot grant itself new permissions (in any tier) without the user approving the `pgate add …` invocation first. The base `pgate` rule stays in `allow` so `check` / `update` / `version` / `init` keep working without a prompt.
 
 ### Self-update
 
@@ -433,7 +437,7 @@ merge_mode = "overwrite"
 ```
 cmd/pgate/                  # CLI entry point
   main.go                   # add / check / init / hook / update / version dispatch
-  add.go                    # `pgate add` subcommand (allow-list entry injection)
+  add.go                    # `pgate add` subcommand (allow/ask/deny entry injection)
   hooks.go                  # Claude Code / OpenCode / pi hook installer
   update.go                 # `pgate update` self-replacement
 
@@ -443,7 +447,7 @@ internal/
   rules/engine.go           # Rule matching engine
   config/
     config.go               # TOML config loading and merging
-    writer.go               # Surgical-edit allow-list writer (pgate add)
+    writer.go               # Surgical-edit per-tier list writer (pgate add)
   builtin/
     commands.go             # ~400 hand-curated commands
     generated_commands.go   # ~9,785 auto-generated patterns

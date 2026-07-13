@@ -56,7 +56,8 @@ Usage:
   pgate version                    Show version
 
 Flags for "add":
-  --scope user|project   Target config file (default: user)
+  --action allow|ask|deny   Which section to append to (default: allow)
+  --scope  user|project     Target config file (default: user)
 
 Flags for "check":
   --json       Output result as JSON

@@ -20,18 +20,18 @@ func withConfigEnv(t *testing.T, globalPath string) {
 
 // spliceForTest is a thin wrapper exposing the unexported splice for tests
 // without duplicating the call chain. Returns (newBytes, dedup, err).
-func spliceForTest(content []byte, spec string) ([]byte, bool, error) {
-	return spliceAllowCommand(content, spec)
+func spliceForTest(content []byte, spec string, action Action) ([]byte, bool, error) {
+	return spliceCommand(content, spec, action)
 }
 
-// ─── File-level behavior (AddAllowCommand) ────────────────────
+// ─── File-level behavior (AddCommand) ─────────────────────────
 
-func TestAddAllowCommand_CreatesMissingFile(t *testing.T) {
+func TestAddCommand_CreatesMissingFile(t *testing.T) {
 	dir := t.TempDir()
 	globalPath := filepath.Join(dir, "config.toml")
 	withConfigEnv(t, globalPath)
 
-	path, added, err := AddAllowCommand("rg", ScopeUser)
+	path, added, err := AddCommand("rg", ActionAllow, ScopeUser)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,72 @@ func TestAddAllowCommand_CreatesMissingFile(t *testing.T) {
 	}
 }
 
-func TestAddAllowCommand_AppendsToSingleLine(t *testing.T) {
+// TestAddCommand_CreatesMissingFileForAllActions runs the file-creation
+// branch once per action; it covers the same code path as the allow
+// test above but for the [ask] and [deny] headers so the action
+// parameter is plumbed all the way through buildMinimalConfig.
+func TestAddCommand_CreatesMissingFileForAllActions(t *testing.T) {
+	cases := []struct {
+		name   string
+		action Action
+		wantFn func(*testing.T, RawConfig)
+	}{
+		{"allow", ActionAllow, func(t *testing.T, c RawConfig) {
+			if len(c.Allow.Commands) != 1 {
+				t.Fatalf("expected 1 allow cmd, got %d", len(c.Allow.Commands))
+			}
+			if s, _ := c.Allow.Commands[0].(string); s != "rg" {
+				t.Errorf("allow[0] = %v, want %q", c.Allow.Commands[0], "rg")
+			}
+		}},
+		{"ask", ActionAsk, func(t *testing.T, c RawConfig) {
+			if len(c.Ask.Commands) != 1 {
+				t.Fatalf("expected 1 ask cmd, got %d", len(c.Ask.Commands))
+			}
+			if s, _ := c.Ask.Commands[0].(string); s != "rg" {
+				t.Errorf("ask[0] = %v, want %q", c.Ask.Commands[0], "rg")
+			}
+		}},
+		{"deny", ActionDeny, func(t *testing.T, c RawConfig) {
+			if len(c.Deny.Commands) != 1 {
+				t.Fatalf("expected 1 deny cmd, got %d", len(c.Deny.Commands))
+			}
+			if s, _ := c.Deny.Commands[0].(string); s != "rg" {
+				t.Errorf("deny[0] = %v, want %q", c.Deny.Commands[0], "rg")
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.name), func(t *testing.T) {
+			dir := t.TempDir()
+			globalPath := filepath.Join(dir, "config.toml")
+			withConfigEnv(t, globalPath)
+
+			path, added, err := AddCommand("rg", tc.action, ScopeUser)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if path != globalPath {
+				t.Errorf("path = %q, want %q", path, globalPath)
+			}
+			if !added {
+				t.Error("expected added=true for first add")
+			}
+
+			data, err := os.ReadFile(globalPath)
+			if err != nil {
+				t.Fatalf("read file: %v", err)
+			}
+			var cfg RawConfig
+			if err := toml.Unmarshal(data, &cfg); err != nil {
+				t.Fatalf("parse written file: %v\n%s", err, data)
+			}
+			tc.wantFn(t, cfg)
+		})
+	}
+}
+
+func TestAddCommand_AppendsToSingleLine(t *testing.T) {
 	dir := t.TempDir()
 	globalPath := filepath.Join(dir, "config.toml")
 	withConfigEnv(t, globalPath)
@@ -69,7 +134,7 @@ commands = ["ls", "cat"]
 		t.Fatal(err)
 	}
 
-	path, added, err := AddAllowCommand("rg", ScopeUser)
+	path, added, err := AddCommand("rg", ActionAllow, ScopeUser)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +154,7 @@ commands = ["ls", "cat", "rg"]`
 	}
 }
 
-func TestAddAllowCommand_AppendsToMultiLineWithTrailingComma(t *testing.T) {
+func TestAddCommand_AppendsToMultiLineWithTrailingComma(t *testing.T) {
 	dir := t.TempDir()
 	globalPath := filepath.Join(dir, "config.toml")
 	withConfigEnv(t, globalPath)
@@ -99,7 +164,7 @@ func TestAddAllowCommand_AppendsToMultiLineWithTrailingComma(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, added, err := AddAllowCommand("delta", ScopeUser); err != nil || !added {
+	if _, added, err := AddCommand("delta", ActionAllow, ScopeUser); err != nil || !added {
 		t.Fatalf("err=%v added=%v", err, added)
 	}
 
@@ -111,7 +176,7 @@ func TestAddAllowCommand_AppendsToMultiLineWithTrailingComma(t *testing.T) {
 	}
 }
 
-func TestAddAllowCommand_AppendsToMultiLineWithoutTrailingComma(t *testing.T) {
+func TestAddCommand_AppendsToMultiLineWithoutTrailingComma(t *testing.T) {
 	dir := t.TempDir()
 	globalPath := filepath.Join(dir, "config.toml")
 	withConfigEnv(t, globalPath)
@@ -121,7 +186,7 @@ func TestAddAllowCommand_AppendsToMultiLineWithoutTrailingComma(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, _, err := AddAllowCommand("delta", ScopeUser); err != nil {
+	if _, _, err := AddCommand("delta", ActionAllow, ScopeUser); err != nil {
 		t.Fatal(err)
 	}
 
@@ -133,7 +198,7 @@ func TestAddAllowCommand_AppendsToMultiLineWithoutTrailingComma(t *testing.T) {
 	}
 }
 
-func TestAddAllowCommand_EmptyArrayBecomesSingle(t *testing.T) {
+func TestAddCommand_EmptyArrayBecomesSingle(t *testing.T) {
 	dir := t.TempDir()
 	globalPath := filepath.Join(dir, "config.toml")
 	withConfigEnv(t, globalPath)
@@ -141,7 +206,7 @@ func TestAddAllowCommand_EmptyArrayBecomesSingle(t *testing.T) {
 	if err := os.WriteFile(globalPath, []byte("[allow]\ncommands = []\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := AddAllowCommand("delta", ScopeUser); err != nil {
+	if _, _, err := AddCommand("delta", ActionAllow, ScopeUser); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(globalPath)
@@ -150,7 +215,7 @@ func TestAddAllowCommand_EmptyArrayBecomesSingle(t *testing.T) {
 	}
 }
 
-func TestAddAllowCommand_IdempotentExactString(t *testing.T) {
+func TestAddCommand_IdempotentExactString(t *testing.T) {
 	dir := t.TempDir()
 	globalPath := filepath.Join(dir, "config.toml")
 	withConfigEnv(t, globalPath)
@@ -163,7 +228,7 @@ func TestAddAllowCommand_IdempotentExactString(t *testing.T) {
 	// Capture original bytes; dedup must NOT touch the file.
 	origBytes, _ := os.ReadFile(globalPath)
 
-	_, added, err := AddAllowCommand("rg", ScopeUser)
+	_, added, err := AddCommand("rg", ActionAllow, ScopeUser)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +242,43 @@ func TestAddAllowCommand_IdempotentExactString(t *testing.T) {
 	}
 }
 
-func TestAddAllowCommand_PreservesComments(t *testing.T) {
+// TestAddCommand_ActionDoesNotBleedAcrossSections verifies that the
+// dedup check is local to a section: adding the same spec under
+// [allow] and then under [ask] should both succeed and produce two
+// distinct entries.
+func TestAddCommand_ActionDoesNotBleedAcrossSections(t *testing.T) {
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "config.toml")
+	withConfigEnv(t, globalPath)
+
+	if _, _, err := AddCommand("rm", ActionAllow, ScopeUser); err != nil {
+		t.Fatal(err)
+	}
+	path, added, err := AddCommand("rm", ActionDeny, ScopeUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !added {
+		t.Error("same spec under a different section must not dedup")
+	}
+	if path != globalPath {
+		t.Errorf("path = %q, want %q", path, globalPath)
+	}
+
+	data, _ := os.ReadFile(globalPath)
+	var cfg RawConfig
+	if err := toml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("reparse: %v\n%s", err, data)
+	}
+	if len(cfg.Allow.Commands) != 1 {
+		t.Errorf("allow should have 1 entry, got %d", len(cfg.Allow.Commands))
+	}
+	if len(cfg.Deny.Commands) != 1 {
+		t.Errorf("deny should have 1 entry, got %d", len(cfg.Deny.Commands))
+	}
+}
+
+func TestAddCommand_PreservesComments(t *testing.T) {
 	dir := t.TempDir()
 	globalPath := filepath.Join(dir, "config.toml")
 	withConfigEnv(t, globalPath)
@@ -197,7 +298,7 @@ commands = [
 		t.Fatal(err)
 	}
 
-	if _, _, err := AddAllowCommand("delta", ScopeUser); err != nil {
+	if _, _, err := AddCommand("delta", ActionAllow, ScopeUser); err != nil {
 		t.Fatal(err)
 	}
 
@@ -231,12 +332,12 @@ commands = [
 	}
 }
 
-// TestAddAllowCommand_PreservesMergeModeAtBottom is the regression test
+// TestAddCommand_PreservesMergeModeAtBottom is the regression test
 // for the go-toml/v2 quirk that motivated text-level editing. Earlier
 // versions used marshal/unmarshal round-trip and silently dropped
 // `merge_mode = "..."` placed AFTER a [table] header. The new code
 // never re-parses, so the line survives intact.
-func TestAddAllowCommand_PreservesMergeModeAtBottom(t *testing.T) {
+func TestAddCommand_PreservesMergeModeAtBottom(t *testing.T) {
 	dir := t.TempDir()
 	globalPath := filepath.Join(dir, "config.toml")
 	withConfigEnv(t, globalPath)
@@ -257,7 +358,7 @@ merge_mode = "append"
 		t.Fatal(err)
 	}
 
-	if _, _, err := AddAllowCommand("delta", ScopeUser); err != nil {
+	if _, _, err := AddCommand("delta", ActionAllow, ScopeUser); err != nil {
 		t.Fatal(err)
 	}
 
@@ -271,7 +372,7 @@ merge_mode = "append"
 	}
 }
 
-func TestAddAllowCommand_PreservesInlineTables(t *testing.T) {
+func TestAddCommand_PreservesInlineTables(t *testing.T) {
 	dir := t.TempDir()
 	globalPath := filepath.Join(dir, "config.toml")
 	withConfigEnv(t, globalPath)
@@ -287,7 +388,7 @@ commands = [
 		t.Fatal(err)
 	}
 
-	if _, _, err := AddAllowCommand("delta", ScopeUser); err != nil {
+	if _, _, err := AddCommand("delta", ActionAllow, ScopeUser); err != nil {
 		t.Fatal(err)
 	}
 
@@ -300,7 +401,7 @@ commands = [
 	}
 }
 
-func TestAddAllowCommand_PreservesCommentsInsideArray(t *testing.T) {
+func TestAddCommand_PreservesCommentsInsideArray(t *testing.T) {
 	dir := t.TempDir()
 	globalPath := filepath.Join(dir, "config.toml")
 	withConfigEnv(t, globalPath)
@@ -316,7 +417,7 @@ commands = [
 		t.Fatal(err)
 	}
 
-	if _, _, err := AddAllowCommand("delta", ScopeUser); err != nil {
+	if _, _, err := AddCommand("delta", ActionAllow, ScopeUser); err != nil {
 		t.Fatal(err)
 	}
 
@@ -326,7 +427,7 @@ commands = [
 	}
 }
 
-func TestAddAllowCommand_EscapesSpecialChars(t *testing.T) {
+func TestAddCommand_EscapesSpecialChars(t *testing.T) {
 	dir := t.TempDir()
 	globalPath := filepath.Join(dir, "config.toml")
 	withConfigEnv(t, globalPath)
@@ -335,7 +436,7 @@ func TestAddAllowCommand_EscapesSpecialChars(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A spec containing characters that need TOML basic-string escaping.
-	if _, _, err := AddAllowCommand(`weird"name\back`, ScopeUser); err != nil {
+	if _, _, err := AddCommand(`weird"name\back`, ActionAllow, ScopeUser); err != nil {
 		t.Fatal(err)
 	}
 
@@ -356,54 +457,80 @@ func TestAddAllowCommand_EscapesSpecialChars(t *testing.T) {
 	}
 }
 
-// ─── [allow] section missing / partial ────────────────────────
+// ─── [allow]/[ask]/[deny] section missing / partial ───────────
 
-func TestAddAllowCommand_NoAllowSection_AppendsNewOne(t *testing.T) {
-	dir := t.TempDir()
-	globalPath := filepath.Join(dir, "config.toml")
-	withConfigEnv(t, globalPath)
+// TestAddCommand_NoSectionForAction_AppendsNewOne verifies that when
+// the section matching the requested action doesn't exist yet, a new
+// one is appended at EOF while any pre-existing section of a different
+// name is preserved.
+func TestAddCommand_NoSectionForAction_AppendsNewOne(t *testing.T) {
+	cases := []struct {
+		name   string
+		action Action
+		header string
+	}{
+		{"allow-section-missing", ActionAllow, "[allow]"},
+		{"ask-section-missing", ActionAsk, "[ask]"},
+		{"deny-section-missing", ActionDeny, "[deny]"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			globalPath := filepath.Join(dir, "config.toml")
+			withConfigEnv(t, globalPath)
 
-	input := "# Only deny, no allow\n[deny]\ncommands = [\"rm\"]\n"
-	if err := os.WriteFile(globalPath, []byte(input), 0644); err != nil {
-		t.Fatal(err)
-	}
+			input := "# Only deny, no allow\n[deny]\ncommands = [\"rm\"]\n"
+			if err := os.WriteFile(globalPath, []byte(input), 0644); err != nil {
+				t.Fatal(err)
+			}
 
-	if _, _, err := AddAllowCommand("delta", ScopeUser); err != nil {
-		t.Fatal(err)
-	}
+			if _, _, err := AddCommand("delta", tc.action, ScopeUser); err != nil {
+				t.Fatal(err)
+			}
 
-	data, _ := os.ReadFile(globalPath)
-	got := string(data)
-	if !strings.Contains(got, "[deny]") || !strings.Contains(got, "[allow]") {
-		t.Errorf("section structure broken:\n%s", got)
-	}
-	if !strings.Contains(got, "\"delta\"") {
-		t.Errorf("delta not inserted:\n%s", got)
-	}
-	// Comment above must survive.
-	if !strings.HasPrefix(got, "# Only deny, no allow\n") {
-		t.Errorf("leading comment lost:\n%s", got)
+			data, _ := os.ReadFile(globalPath)
+			got := string(data)
+			if !strings.Contains(got, "[deny]") || !strings.Contains(got, tc.header) {
+				t.Errorf("section structure broken:\n%s", got)
+			}
+			if !strings.Contains(got, "\"delta\"") {
+				t.Errorf("delta not inserted:\n%s", got)
+			}
+			// Comment above must survive.
+			if !strings.HasPrefix(got, "# Only deny, no allow\n") {
+				t.Errorf("leading comment lost:\n%s", got)
+			}
+		})
 	}
 }
 
-func TestAddAllowCommand_AllowSectionNoCommandsLine_InsertsOne(t *testing.T) {
+// TestAddCommand_AskSectionNoCommandsLine_InsertsOne ensures the
+// "section exists but has no commands line" branch works for [ask],
+// not just [allow]. The branch is action-independent but worth
+// pinning per-action since buildMinimalConfig / findSection both
+// route on it.
+func TestAddCommand_AskSectionNoCommandsLine_InsertsOne(t *testing.T) {
 	dir := t.TempDir()
 	globalPath := filepath.Join(dir, "config.toml")
 	withConfigEnv(t, globalPath)
 
-	input := "[allow]\n\n[deny]\ncommands = [\"rm\"]\n"
+	input := "[allow]\ncommands = [\"ls\"]\n\n[ask]\n\n[deny]\ncommands = [\"rm\"]\n"
 	if err := os.WriteFile(globalPath, []byte(input), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, _, err := AddAllowCommand("delta", ScopeUser); err != nil {
+	if _, _, err := AddCommand("delta", ActionAsk, ScopeUser); err != nil {
 		t.Fatal(err)
 	}
 
 	data, _ := os.ReadFile(globalPath)
 	got := string(data)
-	if !strings.Contains(got, "[allow]\ncommands = [\"delta\"]") {
+	if !strings.Contains(got, "[ask]\ncommands = [\"delta\"]") {
 		t.Errorf("commands line not inserted correctly:\n%s", got)
+	}
+	// Surrounding sections untouched.
+	if !strings.Contains(got, "[allow]\ncommands = [\"ls\"]") {
+		t.Errorf("[allow] section altered:\n%s", got)
 	}
 	if !strings.Contains(got, "[deny]") {
 		t.Errorf("[deny] section lost:\n%s", got)
@@ -412,12 +539,12 @@ func TestAddAllowCommand_AllowSectionNoCommandsLine_InsertsOne(t *testing.T) {
 
 // ─── Scope resolution ─────────────────────────────────────────
 
-func TestAddAllowCommand_ProjectScopeWritesCwdFile(t *testing.T) {
+func TestAddCommand_ProjectScopeWritesCwdFile(t *testing.T) {
 	cwd := t.TempDir()
 	withConfigEnv(t, filepath.Join(t.TempDir(), "global.toml"))
 	t.Chdir(cwd)
 
-	path, added, err := AddAllowCommand("npm", ScopeProject)
+	path, added, err := AddCommand("npm", ActionAllow, ScopeProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -433,14 +560,14 @@ func TestAddAllowCommand_ProjectScopeWritesCwdFile(t *testing.T) {
 	}
 }
 
-func TestAddAllowCommand_ProjectScopeHonorsEnvOverride(t *testing.T) {
+func TestAddCommand_ProjectScopeHonorsEnvOverride(t *testing.T) {
 	cwd := t.TempDir()
 	custom := filepath.Join(t.TempDir(), "custom.toml")
 	t.Chdir(cwd)
 	t.Setenv("PERMISSION_GATE_CONFIG", filepath.Join(t.TempDir(), "global.toml"))
 	t.Setenv("PERMISSION_GATE_PROJECT_CONFIG", custom)
 
-	path, _, err := AddAllowCommand("npm", ScopeProject)
+	path, _, err := AddCommand("npm", ActionAllow, ScopeProject)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +576,7 @@ func TestAddAllowCommand_ProjectScopeHonorsEnvOverride(t *testing.T) {
 	}
 }
 
-func TestAddAllowCommand_CreatesParentDir(t *testing.T) {
+func TestAddCommand_CreatesParentDir(t *testing.T) {
 	parent := t.TempDir()
 	cwd := filepath.Join(parent, "deeply", "nested")
 	if err := os.MkdirAll(cwd, 0755); err != nil {
@@ -460,7 +587,7 @@ func TestAddAllowCommand_CreatesParentDir(t *testing.T) {
 	deep := filepath.Join(cwd, ".config", "permission-gate", "config.toml")
 	t.Setenv("PERMISSION_GATE_CONFIG", deep)
 
-	path, _, err := AddAllowCommand("pnpm", ScopeUser)
+	path, _, err := AddCommand("pnpm", ActionAllow, ScopeUser)
 	if err != nil {
 		t.Fatalf("expected MkdirAll to create dir: %v", err)
 	}
@@ -496,12 +623,41 @@ func TestParseScope(t *testing.T) {
 	}
 }
 
-// ─── Direct spliceAllowCommand tests (no disk I/O) ────────────
+// ─── ParseAction ──────────────────────────────────────────────
+
+func TestParseAction(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    Action
+		wantErr bool
+	}{
+		{"", ActionAllow, false}, // default: backward-compat with pre-flag `pgate add`
+		{"allow", ActionAllow, false},
+		{"ask", ActionAsk, false},
+		{"deny", ActionDeny, false},
+		{"ALLOW", "", true}, // case-sensitive on purpose: matches Action casing exactly
+		{"permit", "", true},
+		{"block", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			got, err := ParseAction(tc.in)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("err = %v, wantErr = %v", err, tc.wantErr)
+			}
+			if !tc.wantErr && got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// ─── Direct spliceCommand tests (no disk I/O) ─────────────────
 
 // TestSpliceEmptyArray inserts into a `commands = []` form.
 func TestSpliceEmptyArray(t *testing.T) {
 	in := []byte("[allow]\ncommands = []\n")
-	out, dedup, err := spliceForTest(in, "delta")
+	out, dedup, err := spliceForTest(in, "delta", ActionAllow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,7 +674,7 @@ func TestSpliceEmptyArray(t *testing.T) {
 // inline-table-form spec as a duplicate of the bare-string form.
 func TestSpliceDedupMatchesBareStringInsideArray(t *testing.T) {
 	in := []byte("[allow]\ncommands = [\"rg\"]\n")
-	out, dedup, err := spliceForTest(in, "rg")
+	out, dedup, err := spliceForTest(in, "rg", ActionAllow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -538,7 +694,7 @@ func TestSpliceDedupMatchesBareStringInsideArray(t *testing.T) {
 // dedup (silently dropping a user's explicit ask) is worse.
 func TestSpliceDoesNotMatchInlineTableAsDuplicate(t *testing.T) {
 	in := []byte("[allow]\ncommands = [{ cmd = \"rg\" }]\n")
-	out, dedup, err := spliceForTest(in, "rg")
+	out, dedup, err := spliceForTest(in, "rg", ActionAllow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -560,7 +716,7 @@ commands = [
     { cmd = "rm", include_args = ["/tmp", "/private/tmp"] },
 ]
 `)
-	out, dedup, err := spliceForTest(in, "rg")
+	out, dedup, err := spliceForTest(in, "rg", ActionAllow)
 	if err != nil {
 		t.Fatalf("splice failed: %v", err)
 	}
@@ -585,7 +741,7 @@ commands = [
     "fd",
 ]
 `)
-	out, _, err := spliceForTest(in, "delta")
+	out, _, err := spliceForTest(in, "delta", ActionAllow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -603,7 +759,7 @@ func TestSpliceDistinguishesAllowFromLongerSectionNames(t *testing.T) {
 	in := []byte(`[allowing]
 commands = ["x"]
 `)
-	out, _, err := spliceForTest(in, "delta")
+	out, _, err := spliceForTest(in, "delta", ActionAllow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -616,11 +772,58 @@ commands = ["x"]
 	}
 }
 
+// TestSpliceAskActionRoutesToAskSection inserts a spec with
+// ActionAsk; the resulting file's commands must land in [ask] (and
+// the pre-existing [allow] entries must be untouched).
+func TestSpliceAskActionRoutesToAskSection(t *testing.T) {
+	in := []byte(`[allow]
+commands = ["ls"]
+
+[ask]
+commands = ["sudo apt update"]
+`)
+	out, _, err := spliceForTest(in, "git push", ActionAsk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out)
+	if !strings.Contains(got, "[allow]\ncommands = [\"ls\"]") {
+		t.Errorf("[allow] was modified:\n%s", got)
+	}
+	if !strings.Contains(got, "[ask]\ncommands = [\"sudo apt update\", \"git push\"]") {
+		t.Errorf("[ask] didn't gain the entry:\n%s", got)
+	}
+}
+
+// TestSpliceDenyActionRoutesToDenySection mirrors the ask test for
+// ActionDeny. This is the headliner for the new feature: previously
+// the writer had no way to route a spec into [deny], so a user could
+// only allow-list, never deny-list, from the CLI.
+func TestSpliceDenyActionRoutesToDenySection(t *testing.T) {
+	in := []byte(`[allow]
+commands = ["ls"]
+
+[deny]
+commands = ["rm -rf"]
+`)
+	out, _, err := spliceForTest(in, "rm -rf /", ActionDeny)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out)
+	if !strings.Contains(got, "[allow]\ncommands = [\"ls\"]") {
+		t.Errorf("[allow] was modified:\n%s", got)
+	}
+	if !strings.Contains(got, "[deny]\ncommands = [\"rm -rf\", \"rm -rf /\"]") {
+		t.Errorf("[deny] didn't gain the entry:\n%s", got)
+	}
+}
+
 // TestSpliceHandlesMultiLineValueContinuation covers the H2 regression
 // flagged by the go-reviewer: a TOML file with the array literal on the
 // line AFTER `commands =` (legal TOML — `=` may be followed by a newline
 // before the value). Without continuation handling, findCommandsLine
-// would conclude "no commands line" and spliceAllowCommand would inject
+// would conclude "no commands line" and spliceCommand would inject
 // a duplicate `commands =` line, producing invalid TOML.
 func TestSpliceHandlesMultiLineValueContinuation(t *testing.T) {
 	dir := t.TempDir()
@@ -635,7 +838,7 @@ commands =
 		t.Fatal(err)
 	}
 
-	if _, added, err := AddAllowCommand("delta", ScopeUser); err != nil || !added {
+	if _, added, err := AddCommand("delta", ActionAllow, ScopeUser); err != nil || !added {
 		t.Fatalf("err=%v added=%v", err, added)
 	}
 
