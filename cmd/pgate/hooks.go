@@ -275,7 +275,11 @@ export const PermissionGatePlugin: Plugin = async ({ $ }) => {
         const lvl = parsed.final?.level
 
         if (lvl === 1) {
-          const ruleReason = parsed.final?.reason ?? "denied"
+          // Prefer user_msg over the synthetic reason: a user-authored
+          // hint reads better than "user deny: rm include_flags=[-rf]".
+          // Falls back through reason → "denied" so the header always
+          // has something to render even on a malformed payload.
+          const ruleReason = parsed.final?.user_msg || parsed.final?.reason || "denied"
           denialCount++
           let msg: string
           if (denialCount === 1) {
@@ -409,7 +413,9 @@ export default function (pi: any) {
         // Deny means deny — block immediately, no popup. Showing a confirm
         // dialog here would make Deny indistinguishable from Ask, and a
         // "user override" path would let denied commands run anyway.
-        const ruleReason = result.final?.reason ?? "denied";
+        // Prefer user_msg over the synthetic reason: a user-authored hint
+        // reads better than "user deny: rm include_flags=[-rf]".
+        const ruleReason = result.final?.user_msg || result.final?.reason || "denied";
         denialCount++;
         let reason: string;
         if (denialCount === 1) {

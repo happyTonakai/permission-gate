@@ -144,6 +144,8 @@ pgate check --json "echo hello | grep world" | jq
 
 `level`：`0` = 允许，`1` = 拒绝，`2` = 询问。
 
+deny 判定可能还携带 `"user_msg"` ——命中规则的 `msg` 字段所写的用户提示，用于交给 agent 阅读（详见 [自定义 deny 提示](#自定义-deny-提示)）。该字段省略时表示未提供，并且仅在单段 deny 且规则定义了 `msg` 时才会出现。
+
 ### 从 stdin 读取命令
 
 当没有提供位置参数时，`pgate check` 从 stdin 读取命令。这是 Agent 扩展调用它的方式（这样多行命令和 `for`/`while`/`if` 块能完整保留）：
@@ -256,6 +258,32 @@ commands = [
 | `exclude_flags` | 命令不能包含任何这些标志（排除匹配）                       |
 | `include_args`  | 每个非标志参数必须以这些前缀之一开头（全匹配）              |
 | `exclude_args`  | 不能有任何非标志参数以这些前缀开头（排除匹配）              |
+| `msg`           | **仅 deny 使用。** 规则触发时返回给 agent 的提示，告知为什么被拦截、以及应该改用什么命令（详见 [自定义 deny 提示](#自定义-deny-提示)） |
+
+### 自定义 deny 提示
+
+当 deny 规则触发时，agent 端的 hook（pi 扩展、Claude `PermissionRequest` hook、OpenCode 插件）会用你写的 `msg` 替换默认的合成原因 "user deny: …"，让 agent 看到的是面向人的解释，而不是内部 spec 描述。
+
+`msg` **仅**对 deny 生效——`[allow]` 和 `[ask]` 里写 `msg` 会被忽略。链式命令（`rm foo && git push bar`）在多段都被拦截时会保留合成原因，因为从两条不同规则的提示中选一条反而会误导 agent。
+
+```toml
+[deny]
+commands = [
+  # 针对常见踩坑给出友好提示
+  { cmd = "rm", msg = "rm 是不可逆的，请改用 git restore 或 python -m shutil 来恢复。" },
+
+  # 引导 agent 走更安全的变体
+  { cmd = "git push", include_flags = ["--force", "-f"],
+    msg = "force-push 会重写共享历史，请改用 git push --force-with-lease，或先询问用户。" },
+]
+```
+
+JSON 输出中该提示位于 `final.user_msg`（非 deny 时省略）：
+
+```json
+{ "level": 1, "reason": "denied: git push origin main", "matched": "",
+  "user_msg": "force-push 会重写共享历史，请改用 git push --force-with-lease，或先询问用户。" }
+```
 
 ### 合并模式
 

@@ -37,6 +37,7 @@ type pattern struct {
 	raw    string
 	source string
 	tier   verdict.Level
+	msg    string
 }
 
 // New creates a rule engine from config, merge mode, and built-in rules.
@@ -129,6 +130,7 @@ func specsToPatterns(specs []config.CommandSpec, source string, tier verdict.Lev
 			raw:    describeSpec(s),
 			source: source,
 			tier:   tier,
+			msg:    s.Msg,
 		})
 	}
 	return out
@@ -152,6 +154,12 @@ func stringsToPatterns(rules []string, source string, tier verdict.Level) []patt
 // is present. Commands with an empty flag list are skipped — otherwise the
 // spec would match every invocation of that command (no IncludeFlags means
 // "no constraint", not "match all").
+//
+// Note: these patterns intentionally leave pattern.msg zero-valued. They
+// are auto-synthesized from the [deny].flags map (and the built-in flag
+// deny rules), which have no per-entry `msg` field — there is no
+// CommandSpec to copy it from. specsToPatterns above is the only path
+// that propagates user-authored hints.
 func flagsToDenyPatterns(flags map[string][]string, source string) []pattern {
 	out := make([]pattern, 0, len(flags))
 	for cmd, flagList := range flags {
@@ -207,7 +215,9 @@ func (e *Engine) Check(cmd analyze.ExtractedCommand) verdict.Verdict {
 		}
 		switch p.tier {
 		case verdict.LevelDeny:
-			return verdict.Deny(p.source+" deny: "+p.raw, p.raw)
+			v := verdict.Deny(p.source+" deny: "+p.raw, p.raw)
+			v.UserMsg = p.msg
+			return v
 		case verdict.LevelAsk:
 			return verdict.Ask(p.source + " ask: " + p.raw)
 		case verdict.LevelAllow:
@@ -234,6 +244,7 @@ func (e *Engine) Evaluate(rawCmd string) *verdict.Result {
 	}
 
 	var deniedCmds, askedCmds []string
+	var lastDenyMsg string
 
 	for _, cmd := range commands {
 		v := e.Check(cmd)
@@ -245,6 +256,7 @@ func (e *Engine) Evaluate(rawCmd string) *verdict.Result {
 		switch v.Level {
 		case verdict.LevelDeny:
 			deniedCmds = append(deniedCmds, cmd.Raw)
+			lastDenyMsg = v.UserMsg
 		case verdict.LevelAsk:
 			askedCmds = append(askedCmds, cmd.Raw)
 		}
@@ -253,6 +265,18 @@ func (e *Engine) Evaluate(rawCmd string) *verdict.Result {
 	switch {
 	case len(deniedCmds) > 0:
 		result.Final = verdict.Deny("denied: "+strings.Join(deniedCmds, ", "), "")
+		// Forward at most one user-authored hint to the final verdict.
+		// Each segment's own Verdict.UserMsg is preserved (so debug
+		// output and per-segment hook logic can still see hints), but
+		// the final verdict only carries a hint when exactly one
+		// segment was denied. In a multi-segment chain (rm foo && git
+		// push bar) two different deny rules may fire and picking one
+		// rule's hint over another would mislead the agent, so we leave
+		// UserMsg empty and let the hook fall back to the synthetic
+		// reason for the whole command.
+		if len(deniedCmds) == 1 {
+			result.Final.UserMsg = lastDenyMsg
+		}
 	case len(askedCmds) == 0:
 		result.Final = verdict.Allow("all commands are allowed", "")
 	default:

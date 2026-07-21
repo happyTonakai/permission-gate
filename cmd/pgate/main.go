@@ -273,12 +273,21 @@ func handleClaudeRequest() {
 	behavior := verdictLevelToClaude(result.Final.Level)
 	logClaudeDecision(behavior, req.ToolInput.Command, result.Final.Reason)
 
+	// For deny, prefer the user-authored hint (result.Final.UserMsg) over
+	// the synthetic reason so the agent sees a human-friendly explanation
+	// of why the command was blocked, not "user deny: rm include_flags=…".
+	// ask/allow ignore UserMsg (it's empty for those tiers today).
+	message := result.Final.Reason
+	if behavior == "deny" && result.Final.UserMsg != "" {
+		message = result.Final.UserMsg
+	}
+
 	resp := claudeHookResponse{
 		HookSpecificOutput: claudeHookOutput{
 			HookEventName: "PermissionRequest",
 			Decision: claudeHookDecision{
 				Behavior: behavior,
-				Message:  result.Final.Reason,
+				Message:  message,
 			},
 		},
 	}

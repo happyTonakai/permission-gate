@@ -27,6 +27,16 @@ type Verdict struct {
 	Level   Level  `json:"level"`
 	Reason  string `json:"reason"`
 	Matched string `json:"matched"`
+	// UserMsg is the user-authored hint from a deny rule's `msg` field.
+	// It travels through the JSON output so the agent-side hook (pi
+	// extension, claude PermissionRequest hook, opencode plugin) can
+	// substitute it for the synthetic `Reason` in the agent-visible
+	// message — see cmd/pgate/hooks.go for the exact rendering. Reason
+	// is kept unchanged because it still drives the local log line and
+	// is what a human reads when debugging why a command was blocked.
+	// Omitted on allow/ask verdicts and on deny verdicts whose spec
+	// didn't set msg.
+	UserMsg string `json:"user_msg,omitempty"`
 }
 
 func Allow(reason, matched string) Verdict {
@@ -45,6 +55,13 @@ func (v Verdict) String() string {
 	s := v.Level.String()
 	if v.Reason != "" {
 		s += ": " + v.Reason
+	}
+	if v.UserMsg != "" {
+		// Render the user-authored hint on its own indented line so it
+		// stays visible in `pgate check --detail` and other non-JSON
+		// output paths — otherwise users authoring msg fields can't see
+		// what the agent will read without falling back to --json.
+		s += "\n    msg: " + v.UserMsg
 	}
 	return s
 }

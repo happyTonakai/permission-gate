@@ -157,6 +157,75 @@ commands = [42]
 	}
 }
 
+func TestLoadFileParsesMsgField(t *testing.T) {
+	// `msg` is a user-authored hint that travels through to the deny
+	// verdict. It must round-trip through RawRules → Specs() unchanged.
+	content := `
+[deny]
+commands = [
+  "rm",
+  { cmd = "git push", include_flags = ["--force"],
+    msg = "Force-push rewrites shared history." },
+]
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(content), 0644)
+
+	cfg, err := loadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specs, err := cfg.Deny.Specs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(specs) != 2 {
+		t.Fatalf("expected 2 deny specs, got %d", len(specs))
+	}
+
+	// Bare string: msg stays empty.
+	if specs[0].Msg != "" {
+		t.Errorf("bare-string spec should have empty Msg, got %q", specs[0].Msg)
+	}
+
+	// Inline table: msg is preserved verbatim, including punctuation and
+	// trailing period (we don't trim — what the user wrote is what they
+	// see).
+	push := specs[1]
+	if push.Cmd != "git push" {
+		t.Errorf("git push cmd = %q", push.Cmd)
+	}
+	if len(push.IncludeFlags) != 1 || push.IncludeFlags[0] != "--force" {
+		t.Errorf("include_flags = %v", push.IncludeFlags)
+	}
+	want := "Force-push rewrites shared history."
+	if push.Msg != want {
+		t.Errorf("Msg = %q, want %q", push.Msg, want)
+	}
+}
+
+func TestLoadFileRejectsNonStringMsg(t *testing.T) {
+	// A `msg` field typed as something other than a string is a
+	// configuration error — silently dropping it would hide the
+	// misconfiguration from the user, so we surface it.
+	content := `
+[deny]
+commands = [{ cmd = "rm", msg = 42 }]
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(content), 0644)
+
+	cfg, err := loadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cfg.Deny.Specs(); err == nil {
+		t.Fatal("expected error for non-string msg field")
+	}
+}
+
 func TestLoadFileMixedStringAndTable(t *testing.T) {
 	content := `
 [allow]

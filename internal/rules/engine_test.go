@@ -1,7 +1,9 @@
 package rules
 
 import (
+	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/happyTonakai/permission-gate/internal/config"
@@ -646,6 +648,150 @@ func assertAllowed(t *testing.T, e *Engine, cmd string) {
 	result := e.Evaluate(cmd)
 	if result.Final.Level != verdict.LevelAllow {
 		t.Errorf("expected allow for %q, got %s", cmd, result.Final.Level)
+	}
+}
+
+// TestUserMsgFlowsToDenyVerdict covers the deny-tier path of the
+// user-authored hint. A deny spec's `msg` field must land in
+// verdict.UserMsg (so the agent-side hook can substitute it for the
+// synthetic Reason), and a deny spec without msg must leave UserMsg
+// empty — that's the backward-compatible case that keeps existing
+// configs behaving the same.
+func TestUserMsgFlowsToDenyVerdict(t *testing.T) {
+	cfg := &config.Config{
+		GlobalRaw: config.RawConfig{
+			Deny: config.RawRules{Commands: []any{
+				map[string]any{"cmd": "git push", "msg": "Use git push --force-with-lease instead."},
+				"rm",
+			}},
+		},
+	}
+	e := newEngine(t, cfg, config.MergePrepend, nil, nil, nil, nil)
+
+	// With msg: UserMsg carries the user-authored hint; Reason still
+	// reflects the synthetic "user deny: …" form for human debug logs.
+	result := e.Evaluate("git push origin main")
+	if result.Final.Level != verdict.LevelDeny {
+		t.Fatalf("expected deny, got %s", result.Final.Level)
+	}
+	if result.Final.UserMsg != "Use git push --force-with-lease instead." {
+		t.Errorf("UserMsg = %q, want the user-authored hint", result.Final.UserMsg)
+	}
+	if result.Final.Reason == "" {
+		t.Errorf("Reason should still hold the synthetic description for debug, got empty")
+	}
+
+	// Without msg: UserMsg is empty so the hook knows to fall back to
+	// Reason. This is the path existing configs travel.
+	result = e.Evaluate("rm -rf /tmp")
+	if result.Final.Level != verdict.LevelDeny {
+		t.Fatalf("expected deny, got %s", result.Final.Level)
+	}
+	if result.Final.UserMsg != "" {
+		t.Errorf("UserMsg should be empty for bare-string spec, got %q", result.Final.UserMsg)
+	}
+}
+
+// TestUserMsgIgnoredOnAllowAsk confirms msg only flows through on deny.
+// An inline-table spec with a msg field living under [allow] or [ask]
+// is a config smell (the hint never reaches the agent), so we make sure
+// it doesn't leak into the verdict as if it had been used.
+func TestUserMsgIgnoredOnAllowAsk(t *testing.T) {
+	cfg := &config.Config{
+		GlobalRaw: config.RawConfig{
+			Allow: config.RawRules{Commands: []any{
+				map[string]any{"cmd": "rg", "msg": "this should never be read"},
+			}},
+			Ask: config.RawRules{Commands: []any{
+				map[string]any{"cmd": "git commit", "msg": "this should also never be read"},
+			}},
+		},
+	}
+	e := newEngine(t, cfg, config.MergePrepend, nil, nil, nil, nil)
+
+	for _, cmd := range []string{"rg foo", "git commit -m x"} {
+		result := e.Evaluate(cmd)
+		if result.Final.UserMsg != "" {
+			t.Errorf("UserMsg must be empty for non-deny verdicts, got %q (cmd=%q)",
+				result.Final.UserMsg, cmd)
+		}
+	}
+}
+
+// TestUserMsgSuppressedOnMultiSegmentDeny pins down the most subtle piece
+// of the UserMsg propagation logic: when two deny rules both fire in the
+// same command (rm foo && sudo bar), the final verdict must NOT carry
+// either rule's hint — picking one would mislead the agent, since the
+// hook renders UserMsg as the agent-visible reason. Per-segment verdicts
+// still keep their own hints for debugging (checked below).
+func TestUserMsgSuppressedOnMultiSegmentDeny(t *testing.T) {
+	cfg := &config.Config{
+		GlobalRaw: config.RawConfig{
+			Deny: config.RawRules{Commands: []any{
+				map[string]any{"cmd": "rm", "msg": "hint for rm"},
+				map[string]any{"cmd": "sudo", "msg": "hint for sudo"},
+			}},
+		},
+	}
+	e := newEngine(t, cfg, config.MergePrepend, nil, nil, nil, nil)
+
+	result := e.Evaluate("rm -rf /tmp && sudo reboot")
+	if result.Final.Level != verdict.LevelDeny {
+		t.Fatalf("expected deny, got %s", result.Final.Level)
+	}
+	if result.Final.UserMsg != "" {
+		t.Errorf("multi-segment deny must suppress UserMsg, got %q", result.Final.UserMsg)
+	}
+
+	// Per-segment hints are still preserved for debug output even though
+	// the final verdict drops them. This is the contract
+	// Verdict.UserMsg's doc comment promises.
+	if len(result.Segments) != 2 {
+		t.Fatalf("expected 2 segments, got %d", len(result.Segments))
+	}
+	for i, seg := range result.Segments {
+		if seg.Verdict.UserMsg == "" {
+			t.Errorf("segments[%d] should keep its own UserMsg for debug, got empty", i)
+		}
+	}
+}
+
+// TestUserMsgJSONOmitempty locks in the JSON contract: user_msg must
+// appear on deny verdicts that have a hint, and must NOT appear
+// (omitempty) on allow/ask verdicts or deny verdicts without one. The
+// hook-side substitution depends on this key being either present-with-
+// value or absent — an empty string in JSON would not parse the same
+// way as a missing key in some agent-side consumers.
+func TestUserMsgJSONOmitempty(t *testing.T) {
+	denyWithMsg := verdict.Deny("user deny: rm", "rm")
+	denyWithMsg.UserMsg = "use git restore"
+	denyNoMsg := verdict.Deny("user deny: rm", "rm")
+	allow := verdict.Allow("builtin allow: ls", "ls")
+	ask := verdict.Ask("unknown command")
+
+	cases := []struct {
+		name    string
+		v       verdict.Verdict
+		wantKey bool
+	}{
+		{"deny with msg", denyWithMsg, true},
+		{"deny without msg", denyNoMsg, false},
+		{"allow", allow, false},
+		{"ask", ask, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := json.Marshal(tc.v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := string(data)
+			hasKey := strings.Contains(s, `"user_msg"`)
+			if hasKey != tc.wantKey {
+				t.Errorf("user_msg key presence = %v, want %v (json: %s)",
+					hasKey, tc.wantKey, s)
+			}
+		})
 	}
 }
 

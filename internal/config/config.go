@@ -40,12 +40,22 @@ const (
 // field. Short option bundles are expanded on both sides when checking flag
 // constraints (-rf matches -r, -f, -rf, -fr, ...). POSIX `--` terminates flag
 // scanning; everything after it is treated as a positional argument.
+//
+// Msg is an optional user-authored hint. Today only the deny tier uses it:
+// when a command hits a deny spec that has Msg set, the verdict carries
+// the hint through to the agent-side hook (pi extension, claude
+// PermissionRequest hook, opencode plugin) which substitutes it for the
+// synthetic Reason in the agent-visible "Permission Gate denied..."
+// message. allow/ask ignore Msg. Keeping Msg on CommandSpec rather than
+// only on RawRules avoids duplicating the field for every tier in the
+// future if we ever decide to surface a custom hint elsewhere.
 type CommandSpec struct {
 	Cmd          string
 	IncludeFlags []string
 	ExcludeFlags []string
 	IncludeArgs  []string
 	ExcludeArgs  []string
+	Msg          string
 }
 
 // RawRules is the on-disk shape of an allow/deny/ask block. Commands are kept
@@ -92,6 +102,13 @@ func parseCommandSpec(v any) (CommandSpec, error) {
 		}
 		if s.ExcludeArgs, err = toStringSlice("exclude_args", x["exclude_args"]); err != nil {
 			return s, err
+		}
+		if msgRaw, hasMsg := x["msg"]; hasMsg {
+			msg, ok := msgRaw.(string)
+			if !ok {
+				return s, fmt.Errorf("msg: expected string, got %T", msgRaw)
+			}
+			s.Msg = msg
 		}
 		return s, nil
 	default:
@@ -347,6 +364,10 @@ func DefaultConfig() string {
 #   exclude_flags — none-of: command must not contain any of these flags
 #   include_args  — all-under: every non-flag arg must live under one of these prefixes
 #   exclude_args  — none-prefix: no non-flag arg may live under any of these prefixes
+#   msg           — deny-only: a user-authored hint shown to the agent when
+#                   the command is blocked. Use it to explain *why* the rule
+#                   exists and *what to do instead*. leave empty for the
+#                   synthetic "user deny: <spec>" message.
 #
 # Excludes are checked first; any exclude hit fails the spec. All four fields
 # are AND-combined; any field failing makes the whole spec not match.
@@ -360,6 +381,8 @@ commands = [
 [deny]
 commands = [
     "rm",
+    { cmd = "git push", include_flags = ["--force", "-f"],
+      msg = "Force-push can rewrite shared history. Ask the user before running this; they may want a normal push or a revert." },
 ]
 
 [ask]

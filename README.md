@@ -146,6 +146,8 @@ pgate check --json "echo hello | grep world" | jq
 
 `level`: `0` = allow, `1` = deny, `2` = ask. Per-segment verdicts let you see which clause of a pipeline tripped the rule.
 
+Deny verdicts may also carry `"user_msg"` — the user-authored hint from the matched rule's `msg` field, intended for the agent to read (see [Custom deny messages](#custom-deny-messages)). It's `omitempty` and is only populated on single-segment deny verdicts whose rule defined `msg`.
+
 ### `--detail` output
 
 Same as the default but prints every segment on its own line, with the matched pattern annotated.
@@ -282,6 +284,7 @@ All four are optional. A spec matches a command only when **all** of the followi
 | `exclude_flags`  | None of these flags may appear in the command (none-of).            |
 | `include_args`   | Every non-flag arg must start with one of these path prefixes (all-under). |
 | `exclude_args`   | No non-flag arg may start with any of these path prefixes (none-prefix). |
+| `msg`            | **Deny-only.** A user-authored hint shown to the agent when the rule blocks a command (see [Custom deny messages](#custom-deny-messages)). |
 
 **Excludes are checked before includes.** Any exclude hit fails the spec, regardless of what the includes say. All fields are AND-combined.
 
@@ -306,6 +309,31 @@ commands = [
   # kubectl delete only on staging context
   { cmd = "kubectl delete", include_flags = ["--context=staging"] },
 ]
+
+### Custom deny messages
+
+When a deny rule fires, the agent-side hook (pi extension, Claude `PermissionRequest` hook, OpenCode plugin) substitutes the synthetic "user deny: …" reason with your `msg` field, so the agent sees a human-friendly explanation of *why* the command is blocked and *what to do instead* rather than an internal spec description.
+
+`msg` is **only** honored on deny rules — `[allow]` and `[ask]` entries ignore it. Multi-segment chains (`rm foo && git push bar`) leave the synthetic reason in place when more than one segment is denied, since picking one rule's hint over another would mislead the agent.
+
+```toml
+[deny]
+commands = [
+  # Friendly hint for a common footgun
+  { cmd = "rm", msg = "Use git restore or python -m shutil to undo changes — rm is irreversible." },
+
+  # Steer the agent toward the safer variant
+  { cmd = "git push", include_flags = ["--force", "-f"],
+    msg = "Force-push rewrites shared history. Use git push --force-with-lease, or ask the user." },
+]
+```
+
+In JSON output the hint lives at `final.user_msg` (omitempty on non-deny verdicts):
+
+```json
+{ "level": 1, "reason": "denied: git push origin main", "matched": "",
+  "user_msg": "Force-push rewrites shared history. Use git push --force-with-lease, or ask the user." }
+```
 ```
 
 ### `flags` map
